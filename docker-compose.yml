@@ -1,0 +1,78 @@
+"""
+Docker Compose configuration for JobHound local development.
+Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
+"""
+# ^ Note: YAML doesn't have comments in the "docstring" sense, but this header
+#   is kept as a YAML comment block below.
+
+# JobHound - docker-compose.yml
+# Orchestrates all services for local development with hot-reload support.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: jobhound_db
+    environment:
+      POSTGRES_USER: jobhound
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: jobhound
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobhound -d jobhound"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: jobhound_backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jobhound:localdev@db:5432/jobhound
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: jobhound_frontend
+    env_file:
+      - ./frontend/.env
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
