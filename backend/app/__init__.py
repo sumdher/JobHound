@@ -1,0 +1,1 @@
+"""JobHound backend application package."""
