@@ -1,5 +1,8 @@
 # JobHound .gitignore
 
+# added by sumdher
+.secrets*
+
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
@@ -62,7 +65,7 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 *.sage.py
-.env
+.env*
 .venv
 env/
 venv/
@@ -113,7 +116,7 @@ dist
 .yarn/install-state.gz
 
 # ── Environment files ─────────────────────────────────────────────────────────
-.env
+*.env*
 .env.local
 .env.*.local
 *.env
