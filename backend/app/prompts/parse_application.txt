@@ -1,0 +1,24 @@
+Extract structured job application data from the following text and return ONLY a valid JSON object.
+
+Input text:
+{text}
+
+Extract these fields (use null for anything not mentioned or uncertain):
+- company (string): The company name
+- job_title (string): The job/role title
+- date_applied (string|null): ISO date format YYYY-MM-DD, null if not mentioned
+- source (string|null): Where the job was found — one of: linkedin, indeed, company_site, referral, glassdoor, other. null if unknown.
+- location (string|null): City, country or "Remote" if mentioned
+- work_mode (string|null): One of: remote, hybrid, onsite. null if not mentioned.
+- whats_in_it_for_me (string|null): Key benefits, growth opportunities, or interesting aspects. Summarize if mentioned.
+- salary_min (integer|null): Minimum salary in CENTS (smallest currency unit). E.g. €80,000 → 8000000. null if not mentioned.
+- salary_max (integer|null): Maximum salary in CENTS. null if not mentioned.
+- salary_currency (string): 3-letter ISO code, default "EUR"
+- salary_period (string): One of: yearly, monthly, hourly. Default "yearly".
+- cv_link (string|null): URL to CV/resume if mentioned
+- cl_link (string|null): URL to cover letter if mentioned
+- job_url (string|null): URL to the job posting if mentioned
+- notes (string|null): Any other relevant information
+- uncertain_fields (array): List of field names you are not confident about
+
+Return ONLY the JSON object, no explanation, no markdown code blocks.
