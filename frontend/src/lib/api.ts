@@ -26,8 +26,18 @@ function getLLMConfig(): LLMConfig {
   }
 }
 
+// Cache the session for a short window so concurrent requests share one fetch.
+let _sessionPromise: ReturnType<typeof getSession> | null = null;
+let _sessionTimestamp = 0;
+const SESSION_CACHE_MS = 5_000;
+ 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const session = await getSession();
+  const now = Date.now();
+  if (!_sessionPromise || now - _sessionTimestamp > SESSION_CACHE_MS) {
+    _sessionPromise = getSession();
+    _sessionTimestamp = now;
+  }
+  const session = await _sessionPromise;
   const token = (session as { accessToken?: string } | null)?.accessToken;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
