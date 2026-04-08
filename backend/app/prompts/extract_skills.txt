@@ -1,0 +1,16 @@
+Extract all technical skills from the following job description and return ONLY a valid JSON array of lowercase canonical skill names.
+
+Job description:
+{job_description}
+
+Include: programming languages, frameworks, libraries, tools, cloud services, databases, DevOps tools, methodologies (e.g. agile, scrum), and any other technical competencies mentioned.
+
+Normalize skill names to canonical lowercase form:
+- "Python 3.x" → "python"
+- "React.js" or "ReactJS" → "react"
+- "Node.JS" → "node.js"
+- "PostgreSQL" → "postgresql"
+- "Amazon Web Services" → "aws"
+- "CI/CD" → "ci/cd"
+
+Return ONLY the JSON array, no explanation, no markdown. Example: ["python", "docker", "kubernetes", "postgresql"]
