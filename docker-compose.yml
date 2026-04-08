@@ -39,6 +39,10 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +65,7 @@ services:
       - ./frontend/.env
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      INTERNAL_API_URL: http://backend:8000
       NEXTAUTH_URL: http://localhost:3000
     ports:
       - "3000:3000"
