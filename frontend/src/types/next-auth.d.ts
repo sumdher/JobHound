@@ -9,6 +9,7 @@ declare module "next-auth" {
   interface Session {
     accessToken?: string;
     userStatus?: string;
+    isAdmin?: boolean;
     user: {
       id?: string;
       avatar_url?: string;
@@ -19,6 +20,7 @@ declare module "next-auth" {
     accessToken?: string;
     avatar_url?: string;
     userStatus?: string;
+    isAdmin?: boolean;
   }
 }
 
@@ -27,5 +29,6 @@ declare module "next-auth/jwt" {
     accessToken?: string;
     avatar_url?: string;
     userStatus?: string;
+    isAdmin?: boolean;
   }
 }

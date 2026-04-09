@@ -114,6 +114,8 @@ async def google_auth(
 
     token = create_access_token(user.id, user.email)
 
+    is_admin = bool(settings.admin_email and email.lower() == settings.admin_email.lower())
+
     return AuthResponse(
         access_token=token,
         user={
@@ -122,6 +124,7 @@ async def google_auth(
             "name": user.name,
             "avatar_url": user.avatar_url,
             "status": user.status,
+            "is_admin": is_admin,
         },
     )
 

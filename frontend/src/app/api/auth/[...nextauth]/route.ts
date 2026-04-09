@@ -49,11 +49,12 @@ const handler = NextAuth({
           if (res.ok) {
             const data = (await res.json()) as {
               access_token: string;
-              user: { avatar_url?: string; status?: string };
+              user: { avatar_url?: string; status?: string; is_admin?: boolean };
             };
             token.accessToken = data.access_token;
             token.avatar_url = data.user?.avatar_url ?? undefined;
             token.userStatus = data.user?.status ?? "pending";
+            token.isAdmin = data.user?.is_admin ?? false;
           }
         } catch (e) {
           console.error("Backend auth exchange failed", e);
@@ -65,6 +66,7 @@ const handler = NextAuth({
     async session({ session, token }: { session: Session; token: JWT }) {
       session.accessToken = token.accessToken;
       session.userStatus = token.userStatus;
+      session.isAdmin = token.isAdmin;
       if (session.user) {
         session.user.avatar_url = token.avatar_url;
       }

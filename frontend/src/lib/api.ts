@@ -243,6 +243,36 @@ export async function getStatusByMonth(): Promise<
   return apiFetch("/api/analytics/status-by-month");
 }
 
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  status: string;
+  application_count: number;
+  created_at: string;
+}
+
+export async function listAllUsers(): Promise<AdminUser[]> {
+  return apiFetch<AdminUser[]>("/api/admin/panel/users");
+}
+
+export async function updateUserStatus(
+  userId: string,
+  newStatus: string
+): Promise<{ id: string; status: string }> {
+  return apiFetch(`/api/admin/panel/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: newStatus }),
+  });
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  return apiFetch<void>(`/api/admin/panel/users/${userId}`, { method: "DELETE" });
+}
+
 // ── Chat ────────────────────────────────────────────────────────────────────
 
 export async function getChatHistory(): Promise<
