@@ -48,7 +48,7 @@ export function Sidebar() {
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-primary/20 text-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
               )}
             >
               <span className="text-base">{item.icon}</span>
@@ -84,7 +84,11 @@ export function Sidebar() {
               </p>
             </div>
             <button
-              onClick={() => signOut({ callbackUrl: "/login" })}
+              onClick={() => {
+                if (window.confirm("Sign out of JobHound?")) {
+                  signOut({ callbackUrl: "/login" });
+                }
+              }}
               className="text-muted-foreground hover:text-foreground transition-colors"
               title="Sign out"
             >

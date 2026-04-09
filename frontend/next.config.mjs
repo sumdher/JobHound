@@ -16,7 +16,6 @@
 
 // export default nextConfig;
 
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
@@ -24,6 +23,15 @@ const nextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
+  },
+
+  async rewrites() {
+    return [
+      {
+        source: "/backend/:path*",
+        destination: "http://backend:8000/:path*",
+      },
+    ];
   },
 };
 

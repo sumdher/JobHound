@@ -6,7 +6,8 @@
 
 import { getSession } from "next-auth/react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/backend";
 
 /** LLM provider config stored in localStorage by the Settings page. */
 export interface LLMConfig {

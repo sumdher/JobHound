@@ -85,13 +85,5 @@ class OpenAIProvider(BaseLLMProvider):
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     yield delta
-            # async with client.chat.completions.stream(
-            #     model=model,
-            #     messages=self._build_messages(messages),  # type: ignore[arg-type]
-            #     temperature=temperature,
-            #     max_tokens=max_tokens,
-            # ) as stream:
-            #     async for chunk in stream:
-            #         delta = chunk.choices[0].delta.content if chunk.choices else None
         except Exception as exc:
             raise ValueError(f"OpenAI stream error: {exc}") from exc
