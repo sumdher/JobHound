@@ -1,12 +1,6 @@
-"""
-Docker Compose configuration for JobHound local development.
-Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
-"""
-# ^ Note: YAML doesn't have comments in the "docstring" sense, but this header
-#   is kept as a YAML comment block below.
-
 # JobHound - docker-compose.yml
-# Orchestrates all services for local development with hot-reload support.
+# Docker Compose configuration for local development.
+# Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
 
 services:
   db:
