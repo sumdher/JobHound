@@ -1,8 +1,9 @@
 """
 Authentication API router.
 Handles Google OAuth token verification and JWT issuance.
-POST /api/auth/google  — verify Google ID token, upsert user, return JWT.
-GET  /api/auth/me      — return current user profile.
+POST /api/auth/google  — verify Google ID token, upsert user, return JWT + status.
+GET  /api/auth/me      — return current user profile (requires approved status).
+GET  /api/auth/status  — return current user status (works for pending users too).
 """
 
 import structlog
@@ -13,10 +14,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.admin import create_action_token
 from app.config import settings
 from app.database import get_db
-from app.middleware.auth import create_access_token, get_current_user
+from app.middleware.auth import create_access_token, get_any_user, get_current_user
 from app.models.user import User
+from app.services.email import send_approval_request_email
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -42,7 +45,8 @@ class AuthResponse(BaseModel):
     summary="Exchange Google ID token for JWT",
     description=(
         "Verifies the Google ID token, upserts the user in the database, "
-        "and returns a signed JWT for subsequent API calls."
+        "and returns a signed JWT. New users start as 'pending' unless they "
+        "are the configured admin email."
     ),
 )
 async def google_auth(
@@ -50,7 +54,6 @@ async def google_auth(
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """Verify Google ID token and return a JobHound JWT."""
-    # Verify the Google ID token
     try:
         id_info = id_token.verify_oauth2_token(
             body.id_token,
@@ -71,25 +74,43 @@ async def google_auth(
             detail="Google token missing email claim",
         )
 
-    # Upsert user
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
+    is_new_user = user is None
 
-    if user is None:
+    if is_new_user:
+        # Auto-approve if no admin is configured (dev mode) or if this IS the admin
+        is_admin = settings.admin_email and email.lower() == settings.admin_email.lower()
+        initial_status = "approved" if (is_admin or not settings.admin_email) else "pending"
+
         user = User(
             email=email,
             name=id_info.get("name"),
             avatar_url=id_info.get("picture"),
+            status=initial_status,
         )
         db.add(user)
         await db.flush()
-        logger.info("New user created", email=email)
+        logger.info("New user created", email=email, status=initial_status)
     else:
         user.name = id_info.get("name", user.name)
         user.avatar_url = id_info.get("picture", user.avatar_url)
 
     await db.commit()
     await db.refresh(user)
+
+    # Send approval email to admin for new non-admin pending users
+    if is_new_user and user.status == "pending":
+        approve_token = create_action_token(user.id, "approve")
+        reject_token = create_action_token(user.id, "reject")
+        approve_url = f"{settings.app_url}/backend/api/admin/approve?token={approve_token}"
+        reject_url = f"{settings.app_url}/backend/api/admin/reject?token={reject_token}"
+        await send_approval_request_email(
+            user_email=user.email,
+            user_name=user.name,
+            approve_url=approve_url,
+            reject_url=reject_url,
+        )
 
     token = create_access_token(user.id, user.email)
 
@@ -100,6 +121,7 @@ async def google_auth(
             "email": user.email,
             "name": user.name,
             "avatar_url": user.avatar_url,
+            "status": user.status,
         },
     )
 
@@ -107,7 +129,7 @@ async def google_auth(
 @router.get(
     "/me",
     summary="Get current user profile",
-    description="Returns the profile of the currently authenticated user.",
+    description="Returns the profile of the currently authenticated user (must be approved).",
 )
 async def get_me(current_user: User = Depends(get_current_user)) -> dict:
     """Return the current user's profile."""
@@ -116,5 +138,19 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "email": current_user.email,
         "name": current_user.name,
         "avatar_url": current_user.avatar_url,
+        "status": current_user.status,
         "created_at": current_user.created_at.isoformat(),
     }
+
+
+@router.get(
+    "/status",
+    summary="Get current user approval status",
+    description=(
+        "Returns the approval status of the authenticated user. "
+        "Works for pending and rejected users (no status check)."
+    ),
+)
+async def get_status(current_user: User = Depends(get_any_user)) -> dict:
+    """Return the user's current approval status (usable by pending users)."""
+    return {"status": current_user.status}

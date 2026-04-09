@@ -1,6 +1,6 @@
 /**
- * Type augmentation for next-auth to include the backend JWT accessToken
- * and user profile fields on the session object.
+ * Type augmentation for next-auth to include the backend JWT accessToken,
+ * user profile fields, and approval status on the session object.
  */
 
 import type { DefaultSession } from "next-auth";
@@ -8,6 +8,7 @@ import type { DefaultSession } from "next-auth";
 declare module "next-auth" {
   interface Session {
     accessToken?: string;
+    userStatus?: string;
     user: {
       id?: string;
       avatar_url?: string;
@@ -17,6 +18,7 @@ declare module "next-auth" {
   interface User {
     accessToken?: string;
     avatar_url?: string;
+    userStatus?: string;
   }
 }
 
@@ -24,5 +26,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     accessToken?: string;
     avatar_url?: string;
+    userStatus?: string;
   }
 }

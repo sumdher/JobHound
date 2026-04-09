@@ -1,7 +1,9 @@
 """
 JWT authentication middleware and FastAPI dependency.
 Verifies HS256 JWTs issued by the backend auth endpoint.
-All protected routes should use the get_current_user dependency.
+
+get_current_user — requires approved status (use for protected routes).
+get_any_user     — no status check (use for /api/auth/status polling).
 """
 
 import uuid
@@ -48,14 +50,11 @@ def decode_token(token: str) -> dict:
         ) from e
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    db: AsyncSession = Depends(get_db),
+async def _fetch_user(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
 ) -> User:
-    """
-    FastAPI dependency that extracts and verifies the JWT from the
-    Authorization header, then fetches the corresponding User from DB.
-    """
+    """Decode JWT and fetch the corresponding User from DB."""
     payload = decode_token(credentials.credentials)
     user_id_str: str | None = payload.get("sub")
 
@@ -83,3 +82,35 @@ async def get_current_user(
         )
 
     return user
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    FastAPI dependency: verifies JWT and fetches user.
+    Raises 403 if the user is not approved (pending / rejected).
+    Use on all normal protected routes.
+    """
+    user = await _fetch_user(credentials, db)
+
+    if user.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Account not approved. Current status: {user.status}.",
+        )
+
+    return user
+
+
+async def get_any_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    FastAPI dependency: verifies JWT and fetches user WITHOUT checking approval status.
+    Use only on endpoints that pending/rejected users must be able to reach
+    (e.g. GET /api/auth/status for the polling pending page).
+    """
+    return await _fetch_user(credentials, db)

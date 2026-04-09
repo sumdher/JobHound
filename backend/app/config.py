@@ -63,6 +63,23 @@ class Settings(BaseSettings):
         default=1536, description="Embedding vector dimensions"
     )
 
+    # ── Admin / Approval ─────────────────────────────────────────────────────
+    admin_email: str = Field(
+        default="",
+        description="Admin email — auto-approved and receives new-user access requests",
+    )
+    app_url: str = Field(
+        default="http://localhost:3000",
+        description="Public frontend URL used in email links (e.g. https://jobhound.example.com)",
+    )
+
+    # ── SMTP ─────────────────────────────────────────────────────────────────
+    smtp_host: str = Field(default="", description="SMTP server hostname")
+    smtp_port: int = Field(default=587, description="SMTP port (587=STARTTLS, 465=SSL)")
+    smtp_user: str = Field(default="", description="SMTP username / login")
+    smtp_password: str = Field(default="", description="SMTP password")
+    smtp_from: str = Field(default="", description="From address (defaults to smtp_user if empty)")
+
     # ── App ───────────────────────────────────────────────────────────────────
     debug: bool = Field(default=False, description="Enable debug mode")
     cors_origins: list[str] = Field(

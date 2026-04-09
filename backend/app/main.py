@@ -44,9 +44,10 @@ def create_app() -> FastAPI:
     )
 
     # Routers
-    from app.api import auth, applications, analytics, chat, skills
+    from app.api import admin, auth, applications, analytics, chat, skills
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+    app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
     app.include_router(applications.router, prefix="/api/applications", tags=["applications"])
     app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
