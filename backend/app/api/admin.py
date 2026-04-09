@@ -20,8 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.models.application import Application, ApplicationSkill, JobDescriptionEmbedding, StatusHistory
+from app.models.application import Application, ApplicationSkill, StatusHistory
 from app.models.chat import ChatMessage
+from app.models.embedding import JobDescriptionEmbedding
 from app.models.user import User
 
 router = APIRouter()
