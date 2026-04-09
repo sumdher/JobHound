@@ -77,5 +77,16 @@ services:
       - backend
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-disabled}
+    depends_on:
+      - frontend
+    restart: unless-stopped
+    profiles:
+      - tunnel
+
 volumes:
   postgres_data:
