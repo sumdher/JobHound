@@ -1,19 +1,17 @@
 """
 Email service for JobHound.
 Sends approval request emails to the admin when a new user registers.
-Uses smtplib wrapped in asyncio.to_thread for non-blocking operation.
+Uses the Resend HTTP API via httpx for non-blocking, secure email delivery.
 """
 
-import asyncio
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
+import httpx
 import structlog
 
 from app.config import settings
 
 logger = structlog.get_logger(__name__)
+
+RESEND_API_URL = "https://api.resend.com/emails"
 
 
 async def send_approval_request_email(
@@ -22,43 +20,32 @@ async def send_approval_request_email(
     approve_url: str,
     reject_url: str,
 ) -> None:
-    """Send a new-user approval request to the admin email (non-blocking)."""
-    if not settings.admin_email or not settings.smtp_host:
-        logger.warning(
-            "Email not configured — skipping approval request email",
-            missing="admin_email" if not settings.admin_email else "smtp_host",
-        )
+    """Send a new-user approval request to the admin email."""
+    if not settings.admin_email:
+        logger.warning("ADMIN_EMAIL not set — skipping approval request email")
+        return
+    if not settings.resend_api_key:
+        logger.warning("RESEND_API_KEY not set — skipping approval request email")
         return
 
+    from_addr = settings.resend_from_email or "JobHound <onboarding@resend.dev>"
+
     try:
-        await asyncio.to_thread(
-            _send_smtp,
-            to=settings.admin_email,
-            subject=f"[JobHound] Access request from {user_email}",
-            html=_approval_email_html(user_email, user_name, approve_url, reject_url),
-        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                RESEND_API_URL,
+                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                json={
+                    "from": from_addr,
+                    "to": [settings.admin_email],
+                    "subject": f"[JobHound] Access request from {user_email}",
+                    "html": _approval_email_html(user_email, user_name, approve_url, reject_url),
+                },
+            )
+            resp.raise_for_status()
+        logger.info("Approval request email sent", to=settings.admin_email)
     except Exception as exc:
         logger.error("Failed to send approval request email", error=str(exc))
-
-
-def _send_smtp(to: str, subject: str, html: str) -> None:
-    """Send an email synchronously via SMTP (run inside asyncio.to_thread)."""
-    from_addr = settings.smtp_from or settings.smtp_user
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = to
-    msg.attach(MIMEText(html, "html"))
-
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        if settings.smtp_user:
-            server.login(settings.smtp_user, settings.smtp_password)
-        server.sendmail(from_addr, [to], msg.as_string())
-
-    logger.info("Approval request email sent", to=to)
 
 
 def _approval_email_html(
@@ -83,7 +70,7 @@ def _approval_email_html(
       <td style="padding: 6px 0;"><strong>{user_email}</strong></td>
     </tr>
   </table>
-  <div style="margin: 28px 0; display: flex; gap: 12px;">
+  <div style="margin: 28px 0;">
     <a href="{approve_url}"
        style="background: #22c55e; color: white; padding: 12px 28px; border-radius: 8px;
               text-decoration: none; font-weight: 600; margin-right: 12px; display: inline-block;">
