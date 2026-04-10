@@ -31,6 +31,8 @@ class User(Base):
     )
     llm_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cv_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cv_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cv_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -47,6 +49,12 @@ class User(Base):
     )
     chat_messages: Mapped[list["ChatMessage"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "ChatMessage", back_populates="user", cascade="all, delete-orphan"
+    )
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "ChatSession", back_populates="user", cascade="all, delete-orphan"
+    )
+    cv_analyses: Mapped[list["CvAnalysis"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
+        "CvAnalysis", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

@@ -2,20 +2,33 @@
  * Authenticated app layout.
  * Wraps all protected pages with the Sidebar and auth guard.
  * Redirects to /login if unauthenticated, /pending if not yet approved.
+ * Loads chat sessions and CV analyses to pass down to the sidebar.
  */
 
 "use client";
 
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { Sidebar } from "@/components/sidebar";
+import {
+  listChatSessions,
+  listCvAnalyses,
+  createChatSession,
+  deleteChatSession,
+  deleteCvAnalysis,
+  type ChatSession,
+  type CvAnalysis,
+} from "@/lib/api";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [analyses, setAnalyses] = useState<CvAnalysis[]>([]);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -24,6 +37,41 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace("/pending");
     }
   }, [status, session, router]);
+
+  // Load sidebar data once authenticated
+  useEffect(() => {
+    if (status !== "authenticated" || session?.userStatus !== "approved") return;
+    listChatSessions().then(setSessions).catch(() => {});
+    listCvAnalyses().then(setAnalyses).catch(() => {});
+  }, [status, session]);
+
+  const handleDeleteSession = useCallback(async (id: string) => {
+    try {
+      await deleteChatSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      // non-critical
+    }
+  }, []);
+
+  const handleDeleteAnalysis = useCallback(async (id: string) => {
+    try {
+      await deleteCvAnalysis(id);
+      setAnalyses((prev) => prev.filter((a) => a.id !== id));
+    } catch {
+      // non-critical
+    }
+  }, []);
+
+  const handleNewChat = useCallback(async () => {
+    try {
+      const newSession = await createChatSession();
+      setSessions((prev) => [newSession, ...prev]);
+      router.push(`/chat?s=${newSession.id}`);
+    } catch {
+      // non-critical
+    }
+  }, [router]);
 
   if (status === "loading") {
     return (
@@ -37,7 +85,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        sessions={sessions}
+        analyses={analyses}
+        onDeleteSession={handleDeleteSession}
+        onDeleteAnalysis={handleDeleteAnalysis}
+        onNewChat={handleNewChat}
+      />
 
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
         {/* Mobile top bar — hidden on lg+ where sidebar is always visible */}
