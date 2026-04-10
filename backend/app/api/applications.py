@@ -276,12 +276,13 @@ async def list_applications(
     )
     total = count_result.scalar_one()
 
-    # Sorting
-    sort_col = _SORT_COLUMNS.get(sort_by or "created_at", Application.created_at)
+    # Sorting — always add created_at DESC as a tiebreaker so same-date
+    # applications appear in a stable, predictable order.
+    sort_col = _SORT_COLUMNS.get(sort_by or "date_applied", Application.date_applied)
     if sort_order == "asc":
-        base_query = base_query.order_by(sort_col.asc())  # type: ignore[union-attr]
+        base_query = base_query.order_by(sort_col.asc(), Application.created_at.desc())  # type: ignore[union-attr]
     else:
-        base_query = base_query.order_by(sort_col.desc())  # type: ignore[union-attr]
+        base_query = base_query.order_by(sort_col.desc(), Application.created_at.desc())  # type: ignore[union-attr]
 
     # Pagination with eager-loaded relationships
     offset = (page - 1) * page_size
