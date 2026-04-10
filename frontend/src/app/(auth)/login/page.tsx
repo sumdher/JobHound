@@ -6,12 +6,14 @@
 "use client";
 
 import { signIn, useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 
 export default function LoginPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const approved = searchParams.get("approved") === "1";
 
   useEffect(() => {
     if (session) {
@@ -44,6 +46,13 @@ export default function LoginPage() {
             AI-powered job application tracker
           </p>
         </div>
+
+        {/* Approval banner */}
+        {approved && (
+          <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-center text-sm text-green-400">
+            Your account has been approved! Sign in to continue.
+          </div>
+        )}
 
         {/* Features */}
         <ul className="space-y-2 text-sm text-muted-foreground">

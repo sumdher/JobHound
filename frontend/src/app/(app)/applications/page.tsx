@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import {
   listApplications,
   deleteApplication,
+  updateApplication,
   type Application,
   type ApplicationFilters,
 } from "@/lib/api";
@@ -70,20 +71,54 @@ function SkillPills({ skills }: { skills: string[] }) {
   );
 }
 
-// ── Status Badge ──────────────────────────────────────────────────────────────
+// ── Inline Status Select ──────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
-  const colorClass =
-    STATUS_COLORS[status] ?? "bg-muted text-muted-foreground border-border";
+// Inline styles needed — browsers ignore Tailwind bg-* on native <select>
+const STATUS_STYLES: Record<string, { bg: string; color: string; border: string }> = {
+  applied:             { bg: "rgba(59,130,246,0.2)",  color: "#60a5fa", border: "rgba(59,130,246,0.35)" },
+  screening:           { bg: "rgba(168,85,247,0.2)",  color: "#c084fc", border: "rgba(168,85,247,0.35)" },
+  interview_scheduled: { bg: "rgba(234,179,8,0.2)",   color: "#facc15", border: "rgba(234,179,8,0.35)" },
+  interviewing:        { bg: "rgba(249,115,22,0.2)",  color: "#fb923c", border: "rgba(249,115,22,0.35)" },
+  offer:               { bg: "rgba(34,197,94,0.2)",   color: "#4ade80", border: "rgba(34,197,94,0.35)" },
+  rejected:            { bg: "rgba(239,68,68,0.2)",   color: "#f87171", border: "rgba(239,68,68,0.35)" },
+  ghosted:             { bg: "rgba(107,114,128,0.2)", color: "#9ca3af", border: "rgba(107,114,128,0.35)" },
+  withdrawn:           { bg: "rgba(107,114,128,0.2)", color: "#9ca3af", border: "rgba(107,114,128,0.35)" },
+};
+
+function StatusSelect({
+  status,
+  updating,
+  onChange,
+}: {
+  status: string;
+  updating: boolean;
+  onChange: (v: string) => void;
+}) {
+  const s = STATUS_STYLES[status] ?? { bg: "rgba(107,114,128,0.2)", color: "#9ca3af", border: "rgba(107,114,128,0.35)" };
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-        colorClass
-      )}
+    <select
+      value={status}
+      disabled={updating}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-full border px-2.5 py-0.5 pr-6 text-xs font-medium cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-wait"
+      style={{
+        backgroundColor: s.bg,
+        color: s.color,
+        borderColor: s.border,
+        backgroundImage: updating
+          ? "none"
+          : `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='${encodeURIComponent(s.color)}'/%3E%3C/svg%3E")`,
+        backgroundRepeat: "no-repeat",
+        backgroundPosition: "right 6px center",
+        backgroundSize: "8px",
+      }}
     >
-      {STATUS_LABELS[status] ?? status}
-    </span>
+      {ALL_STATUSES.map((opt) => (
+        <option key={opt} value={opt} style={{ backgroundColor: "#1e293b", color: "#e2e8f0" }}>
+          {STATUS_LABELS[opt] ?? opt}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -172,6 +207,9 @@ export default function ApplicationsPage() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Inline status editing
+  const [statusUpdating, setStatusUpdating] = useState<Set<string>>(new Set());
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const load = useCallback(async () => {
@@ -210,6 +248,27 @@ export default function ApplicationsPage() {
   useEffect(() => {
     setPage(1);
   }, [search, statusFilter, sourceFilter, sortOption]);
+
+  async function handleStatusChange(id: string, newStatus: string) {
+    setStatusUpdating((s) => new Set(s).add(id));
+    // Optimistic update
+    setApplications((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
+    );
+    try {
+      await updateApplication(id, { status: newStatus });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Status update failed");
+      // Revert on failure
+      void load();
+    } finally {
+      setStatusUpdating((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
 
   async function handleDelete(id: string) {
     setDeleting(true);
@@ -375,8 +434,15 @@ export default function ApplicationsPage() {
                       <td className="px-4 py-3 text-muted-foreground">
                         {app.job_title}
                       </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={app.status} />
+                      <td
+                        className="px-4 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <StatusSelect
+                          status={app.status}
+                          updating={statusUpdating.has(app.id)}
+                          onChange={(v) => handleStatusChange(app.id, v)}
+                        />
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
                         {formatDate(app.date_applied)}

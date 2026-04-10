@@ -143,6 +143,13 @@ class ParseRequest(BaseModel):
     """Request body for the parse-from-text endpoint."""
 
     text: str
+    # Optional LLM config — mirrors the Settings page provider/model selection
+    provider: str | None = None
+    model: str | None = None
+    api_key: str | None = Field(default=None, alias="apiKey")
+    base_url: str | None = Field(default=None, alias="baseUrl")
+
+    model_config = {"populate_by_name": True}
 
 
 class ParseResponse(BaseModel):

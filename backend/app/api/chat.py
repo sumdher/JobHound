@@ -4,6 +4,7 @@ Uses Server-Sent Events (SSE) to stream LLM tokens to the frontend.
 All endpoints require JWT authentication.
 """
 
+import asyncio
 import json
 
 import structlog
@@ -56,22 +57,52 @@ async def chat(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url,
+            # For Ollama, ignore frontend base_url (localhost:11434 is unreachable
+            # from inside Docker). Backend always uses OLLAMA_URL env var instead.
+            base_url=body.base_url if body.provider != "ollama" else None,
         )
 
     async def event_generator():
+        # Send an immediate heartbeat so Cloudflare's 100s timeout starts fresh
+        # once tokens begin flowing, not from when Ollama starts thinking.
+        yield ": heartbeat\n\n"
+
+        queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+
+        async def _fill() -> None:
+            try:
+                async for token in rag.stream_chat(
+                    message=body.message,
+                    user_id=current_user.id,
+                    db=db,
+                    config=config,
+                ):
+                    await queue.put(("token", token))
+            except Exception as e:
+                logger.error("Chat stream error", error=str(e))
+                await queue.put(("error", str(e)))
+            finally:
+                await queue.put(("done", None))
+
+        task = asyncio.create_task(_fill())
         try:
-            async for token in rag.stream_chat(
-                message=body.message,
-                user_id=current_user.id,
-                db=db,
-                config=config,
-            ):
-                yield f"data: {json.dumps({'token': token})}\n\n"
-        except Exception as e:
-            logger.error("Chat stream error", error=str(e))
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            while True:
+                try:
+                    kind, value = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Keep Cloudflare alive while Ollama is still thinking
+                    yield ": heartbeat\n\n"
+                    continue
+
+                if kind == "token":
+                    yield f"data: {json.dumps({'token': value})}\n\n"
+                elif kind == "error":
+                    yield f"data: {json.dumps({'error': value})}\n\n"
+                    break
+                else:  # "done"
+                    break
         finally:
+            task.cancel()
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(

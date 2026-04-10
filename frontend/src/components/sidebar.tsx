@@ -12,6 +12,18 @@ import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
+function JobHoundLogo({ size = 28 }: { size?: number }) {
+  return (
+    <Image
+      src="/logo.svg"
+      alt="JobHound"
+      width={size}
+      height={size}
+      priority
+    />
+  );
+}
+
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/applications", label: "Applications", icon: "📋" },
@@ -28,7 +40,7 @@ export function Sidebar() {
     <aside className="flex h-full w-64 flex-col border-r border-border bg-card">
       {/* Logo */}
       <div className="flex h-16 items-center gap-2 border-b border-border px-4">
-        <span className="text-2xl">🐾</span>
+        <JobHoundLogo size={30} />
         <span className="text-lg font-bold tracking-tight">JobHound</span>
       </div>
 
@@ -48,7 +60,7 @@ export function Sidebar() {
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
                   ? "bg-primary/20 text-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               )}
             >
               <span className="text-base">{item.icon}</span>
@@ -56,6 +68,22 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Admin link — only visible to the admin account */}
+        {session?.isAdmin && (
+          <Link
+            href="/admin"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              pathname.startsWith("/admin")
+                ? "bg-primary/20 text-primary"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )}
+          >
+            <span className="text-base">🛡️</span>
+            Admin Panel
+          </Link>
+        )}
       </nav>
 
       {/* User profile */}

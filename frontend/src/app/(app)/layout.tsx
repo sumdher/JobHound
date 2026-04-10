@@ -1,7 +1,7 @@
 /**
  * Authenticated app layout.
  * Wraps all protected pages with the Sidebar and auth guard.
- * Redirects to /login if the user is not authenticated.
+ * Redirects to /login if unauthenticated, /pending if not yet approved.
  */
 
 "use client";
@@ -18,8 +18,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (status === "unauthenticated") {
       router.replace("/login");
+    } else if (status === "authenticated" && session?.userStatus !== "approved") {
+      router.replace("/pending");
     }
-  }, [status, router]);
+  }, [status, session, router]);
 
   if (status === "loading") {
     return (
@@ -29,7 +31,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session) return null;
+  if (!session || session.userStatus !== "approved") return null;
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

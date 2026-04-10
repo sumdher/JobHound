@@ -1,3 +1,5 @@
+Today's date is {today}. Use this to resolve relative date expressions like "today", "yesterday", "2 days ago", "last Monday", etc.
+
 Extract structured job application data from the following text and return ONLY a valid JSON object.
 
 Input text:
@@ -6,14 +8,14 @@ Input text:
 Extract these fields (use null for anything not mentioned or uncertain):
 - company (string): The company name
 - job_title (string): The job/role title
-- date_applied (string|null): ISO date format YYYY-MM-DD, null if not mentioned
-- source (string|null): Where the job was found — one of: linkedin, indeed, company_site, referral, glassdoor, other. null if unknown.
+- date_applied (string|null): ISO date format YYYY-MM-DD. Resolve relative expressions using today's date above. null only if truly no date information is present.
+- source (string|null): Where the job was found — one of: linkedin, indeed, company_site, referral, glassdoor, other. Look for mentions like "on LinkedIn", "via Indeed", "through a referral", etc. null if unknown.
 - location (string|null): City, country or "Remote" if mentioned
 - work_mode (string|null): One of: remote, hybrid, onsite. null if not mentioned.
 - whats_in_it_for_me (string|null): Key benefits, growth opportunities, or interesting aspects. Summarize if mentioned.
-- salary_min (integer|null): Minimum salary in CENTS (smallest currency unit). E.g. €80,000 → 8000000. null if not mentioned.
-- salary_max (integer|null): Maximum salary in CENTS. null if not mentioned.
-- salary_currency (string): 3-letter ISO code, default "EUR"
+- salary_min (integer|null): Minimum salary in CENTS in EUR. Always convert to EUR. E.g. €80,000 → 8000000, £85,000 → approx 10200000. null if not mentioned.
+- salary_max (integer|null): Maximum salary in CENTS in EUR. Always convert to EUR. null if not mentioned.
+- salary_currency (string): Always "EUR" (store converted value). If original was a different currency, mention it in notes.
 - salary_period (string): One of: yearly, monthly, hourly. Default "yearly".
 - cv_link (string|null): URL to CV/resume if mentioned
 - cl_link (string|null): URL to cover letter if mentioned

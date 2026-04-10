@@ -3,19 +3,6 @@
  * Enables standalone output for Docker production builds.
  */
 
-// import type { NextConfig } from "next";
-
-// const nextConfig: NextConfig = {
-//   output: "standalone",
-//   images: {
-//     remotePatterns: [
-//       { protocol: "https", hostname: "lh3.googleusercontent.com" },
-//     ],
-//   },
-// };
-
-// export default nextConfig;
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
@@ -24,7 +11,9 @@ const nextConfig = {
       { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
   },
-
+  // Proxy all backend API calls through Next.js so the browser always hits
+  // the same host/port as the frontend. This makes the app work on any IP
+  // or network without hardcoding anything.
   async rewrites() {
     return [
       {

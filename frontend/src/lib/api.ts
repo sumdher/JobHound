@@ -6,7 +6,10 @@
 
 import { getSession } from "next-auth/react";
 
-// const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Use relative URL so requests go through the Next.js proxy rewrite
+// (next.config.ts: /backend/* → http://backend:8000/*).
+// This works on any IP/network — no hardcoded host needed.
+// Override via NEXT_PUBLIC_API_URL for non-Docker deployments.
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/backend";
 
 /** LLM provider config stored in localStorage by the Settings page. */
@@ -31,7 +34,7 @@ function getLLMConfig(): LLMConfig {
 let _sessionPromise: ReturnType<typeof getSession> | null = null;
 let _sessionTimestamp = 0;
 const SESSION_CACHE_MS = 5_000;
- 
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const now = Date.now();
   if (!_sessionPromise || now - _sessionTimestamp > SESSION_CACHE_MS) {
@@ -240,6 +243,36 @@ export async function getStatusByMonth(): Promise<
   return apiFetch("/api/analytics/status-by-month");
 }
 
+// ── Admin ────────────────────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  status: string;
+  application_count: number;
+  created_at: string;
+}
+
+export async function listAllUsers(): Promise<AdminUser[]> {
+  return apiFetch<AdminUser[]>("/api/admin/panel/users");
+}
+
+export async function updateUserStatus(
+  userId: string,
+  newStatus: string
+): Promise<{ id: string; status: string }> {
+  return apiFetch(`/api/admin/panel/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: newStatus }),
+  });
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  return apiFetch<void>(`/api/admin/panel/users/${userId}`, { method: "DELETE" });
+}
+
 // ── Chat ────────────────────────────────────────────────────────────────────
 
 export async function getChatHistory(): Promise<
@@ -262,7 +295,10 @@ export async function streamChat(
   const authHeaders = await getAuthHeaders();
   const llmConfig = getLLMConfig();
 
-  const res = await fetch(`${API_URL}/api/chat`, {
+  // Use the Next.js route handler (/api/chat) instead of the rewrite proxy
+  // (/backend/api/chat) — the route handler pipes SSE in real-time, while
+  // rewrites buffer the entire response before forwarding (Cloudflare 524).
+  const res = await fetch(`/api/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

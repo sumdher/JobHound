@@ -1,10 +1,6 @@
-# Docker Compose configuration for JobHound local development.
-# Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
-# ^ Note: YAML doesn't have comments in the "docstring" sense, but this header
-#   is kept as a YAML comment block below.
-
 # JobHound - docker-compose.yml
-# Orchestrates all services for local development with hot-reload support.
+# Docker Compose configuration for local development.
+# Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
 
 services:
   db:
@@ -39,7 +35,6 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
@@ -64,9 +59,13 @@ services:
     env_file:
       - ./frontend/.env
     environment:
-      # NEXT_PUBLIC_API_URL: http://localhost:8000
+      # NEXT_PUBLIC_API_URL intentionally omitted — falls back to "/backend"
+      # which is proxied by Next.js rewrites to http://backend:8000.
+      # This makes the app reachable on any IP/network without changes.
       INTERNAL_API_URL: http://backend:8000
-      # NEXTAUTH_URL: http://localhost:3000
+      # NEXTAUTH_URL is intentionally not set.
+      # NextAuth v4 auto-detects the base URL from the request Host header,
+      # so the app works on localhost, LAN IP, or any host without config changes.
     ports:
       - "3000:3000"
     volumes:
@@ -77,6 +76,11 @@ services:
       - backend
     restart: unless-stopped
 
+  # Optional: Cloudflare Tunnel for stable public HTTPS access.
+  # Gives a fixed URL (e.g. https://jobhound.example.com) that works from
+  # any network — no dynamic IP, no port forwarding, no server needed.
+  # Setup: cloudflare.com → Zero Trust → Tunnels → create tunnel → get token.
+  # Enable: add CLOUDFLARE_TUNNEL_TOKEN=<token> to your root .env file.
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run
