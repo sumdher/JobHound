@@ -104,7 +104,7 @@ docker compose up
 | `JWT_SECRET` | Yes | `change-me` | Secret for signing JWTs |
 | `LLM_PROVIDER` | No | `ollama` | LLM provider: `ollama`, `openai`, `anthropic`, `nebius` |
 | `OLLAMA_URL` | No | `http://host.docker.internal:11434` | Ollama base URL |
-| `OLLAMA_MODEL` | No | `gemma3:12b` | Ollama model name |
+| `OLLAMA_MODEL` | No | `gemma4:e4b` | Ollama model name |
 | `OPENAI_API_KEY` | If using OpenAI | — | OpenAI API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | — | Anthropic API key |
 | `NEBIUS_API_KEY` | If using Nebius | — | Nebius API key |
@@ -139,7 +139,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Use local Ollama
 LLM_PROVIDER=ollama
-OLLAMA_MODEL=gemma3:12b
+OLLAMA_MODEL=gemma4:e4b
 ```
 
 ## API Documentation
