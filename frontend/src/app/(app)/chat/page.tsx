@@ -197,6 +197,14 @@ export default function ChatPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Auto-grow the textarea to fit content, capped at 180px
+  const adjustHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
   useEffect(() => {
     const loadHistory = async () => {
       try {
@@ -237,6 +245,8 @@ export default function ChatPage() {
 
     setInput("");
     setError("");
+    // Reset textarea height after clearing
+    if (inputRef.current) inputRef.current.style.height = "auto";
 
     const userMessage: Message = { role: "user", content: msg };
     const assistantMessage: Message = { role: "assistant", content: "", streaming: true };
@@ -430,22 +440,23 @@ export default function ChatPage() {
       )}
 
       {/* Input */}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-2 flex items-end gap-2">
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { setInput(e.target.value); adjustHeight(); }}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about your applications… (Enter to send, Shift+Enter for newline)"
+          placeholder="Ask about your applications… (Shift+Enter for newline)"
           disabled={streaming}
-          rows={2}
-          className="flex-1 resize-none rounded-lg border border-border bg-input px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+          rows={1}
+          style={{ maxHeight: "180px" }}
+          className="flex-1 resize-none overflow-y-auto rounded-xl border border-border bg-input px-4 py-3 text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 transition-[height]"
         />
         {streaming ? (
           <button
             onClick={handleStop}
             title="Stop generation"
-            className="rounded-lg bg-secondary px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors flex items-center gap-1.5"
+            className="shrink-0 rounded-xl bg-secondary px-4 py-3 text-sm font-medium text-foreground hover:bg-accent transition-colors flex items-center gap-1.5"
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
               <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -456,7 +467,7 @@ export default function ChatPage() {
           <button
             onClick={() => handleSend()}
             disabled={!input.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            className="shrink-0 rounded-xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
           >
             Send
           </button>
