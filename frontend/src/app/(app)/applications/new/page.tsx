@@ -372,22 +372,22 @@ function ApplicationForm({
         <h3 className="text-sm font-semibold text-foreground mb-3">Salary</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
-            <Label>Min (cents)</Label>
+            <Label>Min ({formData.salary_currency || "EUR"})</Label>
             <Input
               type="number"
               value={formData.salary_min}
               onChange={(v) => onChange("salary_min", v)}
-              placeholder="e.g. 8000000"
+              placeholder="e.g. 80000"
               uncertain={isUncertain("salary_min")}
             />
           </div>
           <div>
-            <Label>Max (cents)</Label>
+            <Label>Max ({formData.salary_currency || "EUR"})</Label>
             <Input
               type="number"
               value={formData.salary_max}
               onChange={(v) => onChange("salary_max", v)}
-              placeholder="e.g. 10000000"
+              placeholder="e.g. 100000"
               uncertain={isUncertain("salary_max")}
             />
           </div>
@@ -521,8 +521,8 @@ export default function NewApplicationPage() {
         location: String(p.location ?? ""),
         work_mode: String(p.work_mode ?? ""),
         whats_in_it_for_me: String(p.whats_in_it_for_me ?? ""),
-        salary_min: p.salary_min != null ? String(p.salary_min) : "",
-        salary_max: p.salary_max != null ? String(p.salary_max) : "",
+        salary_min: p.salary_min != null ? String(Math.round(p.salary_min / 100)) : "",
+        salary_max: p.salary_max != null ? String(Math.round(p.salary_max / 100)) : "",
         salary_currency: String(p.salary_currency ?? "EUR"),
         job_url: String(p.job_url ?? ""),
         cv_link: String(p.cv_link ?? ""),
@@ -551,8 +551,8 @@ export default function NewApplicationPage() {
       const payload: Record<string, unknown> = {
         ...formData,
         skills,
-        salary_min: formData.salary_min ? Number(formData.salary_min) : undefined,
-        salary_max: formData.salary_max ? Number(formData.salary_max) : undefined,
+        salary_min: formData.salary_min ? Math.round(Number(formData.salary_min) * 100) : undefined,
+        salary_max: formData.salary_max ? Math.round(Number(formData.salary_max) * 100) : undefined,
         raw_input: formData.raw_input || rawText || undefined,
       };
 

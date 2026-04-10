@@ -13,9 +13,9 @@ Extract these fields (use null for anything not mentioned or uncertain):
 - location (string|null): City, country or "Remote" if mentioned
 - work_mode (string|null): One of: remote, hybrid, onsite. null if not mentioned.
 - whats_in_it_for_me (string|null): Key benefits, growth opportunities, or interesting aspects. Summarize if mentioned.
-- salary_min (integer|null): Minimum salary in CENTS (smallest currency unit). E.g. €80,000 → 8000000. null if not mentioned.
-- salary_max (integer|null): Maximum salary in CENTS. null if not mentioned.
-- salary_currency (string): 3-letter ISO code, default "EUR"
+- salary_min (integer|null): Minimum salary in CENTS in EUR. Always convert to EUR. E.g. €80,000 → 8000000, £85,000 → approx 10200000. null if not mentioned.
+- salary_max (integer|null): Maximum salary in CENTS in EUR. Always convert to EUR. null if not mentioned.
+- salary_currency (string): Always "EUR" (store converted value). If original was a different currency, mention it in notes.
 - salary_period (string): One of: yearly, monthly, hourly. Default "yearly".
 - cv_link (string|null): URL to CV/resume if mentioned
 - cl_link (string|null): URL to cover letter if mentioned

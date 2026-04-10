@@ -82,8 +82,8 @@ function toEditState(app: Application): EditState {
     location: app.location ?? "",
     work_mode: app.work_mode ?? "",
     whats_in_it_for_me: app.whats_in_it_for_me ?? "",
-    salary_min: app.salary_min != null ? String(app.salary_min) : "",
-    salary_max: app.salary_max != null ? String(app.salary_max) : "",
+    salary_min: app.salary_min != null ? String(Math.round(app.salary_min / 100)) : "",
+    salary_max: app.salary_max != null ? String(Math.round(app.salary_max / 100)) : "",
     salary_currency: app.salary_currency ?? "EUR",
     job_url: app.job_url ?? "",
     cv_link: app.cv_link ?? "",
@@ -399,8 +399,8 @@ export default function ApplicationDetailPage() {
         location: editState.location || null,
         work_mode: editState.work_mode || null,
         whats_in_it_for_me: editState.whats_in_it_for_me || null,
-        salary_min: editState.salary_min ? Number(editState.salary_min) : null,
-        salary_max: editState.salary_max ? Number(editState.salary_max) : null,
+        salary_min: editState.salary_min ? Math.round(Number(editState.salary_min) * 100) : null,
+        salary_max: editState.salary_max ? Math.round(Number(editState.salary_max) * 100) : null,
         salary_currency: editState.salary_currency || "EUR",
         job_url: editState.job_url || null,
         cv_link: editState.cv_link || null,
@@ -728,25 +728,25 @@ export default function ApplicationDetailPage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">
-                  Min (cents)
+                  Min ({es.salary_currency || "EUR"})
                 </label>
                 <EditInput
                   type="number"
                   value={es.salary_min}
                   onChange={(v) => setField("salary_min", v)}
-                  placeholder="e.g. 8000000"
+                  placeholder="e.g. 80000"
                   className="w-full"
                 />
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">
-                  Max (cents)
+                  Max ({es.salary_currency || "EUR"})
                 </label>
                 <EditInput
                   type="number"
                   value={es.salary_max}
                   onChange={(v) => setField("salary_max", v)}
-                  placeholder="e.g. 10000000"
+                  placeholder="e.g. 100000"
                   className="w-full"
                 />
               </div>
