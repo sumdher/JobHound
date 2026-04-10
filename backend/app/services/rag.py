@@ -73,29 +73,31 @@ async def stream_chat(
         embedding_provider = get_embedding_provider()
         query_embedding = await embedding_provider.embed(message)
 
-        # 2. Vector search: top-5 similar JD chunks for this user's apps
-        vector_sql = text("""
+        # Inline the embedding as a numeric literal — safe because it's generated
+        # by our own embedding service (only floats), never user input.
+        # This sidesteps SQLAlchemy text() confusing ::vector with a named param.
+        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        vector_sql = text(f"""
             SELECT
                 jde.chunk_text,
                 a.company,
                 a.job_title,
-                1 - (jde.embedding <=> :embedding::vector) AS similarity
+                1 - (jde.embedding <=> '{embedding_literal}'::vector) AS similarity
             FROM job_description_embeddings jde
             JOIN applications a ON a.id = jde.application_id
             WHERE a.user_id = :user_id AND a.is_deleted = false
-            ORDER BY jde.embedding <=> :embedding::vector
+            ORDER BY jde.embedding <=> '{embedding_literal}'::vector
             LIMIT 5
         """)
-        embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        vec_result = await db.execute(
-            vector_sql, {"user_id": str(user_id), "embedding": embedding_str}
-        )
+        vec_result = await db.execute(vector_sql, {"user_id": str(user_id)})
         chunk_rows = [
             {"chunk_text": r[0], "company": r[1], "job_title": r[2], "similarity": r[3]}
             for r in vec_result.fetchall()
         ]
     except Exception as e:
         logger.warning("Vector search failed, using SQL-only", error=str(e))
+        # Roll back the aborted transaction so subsequent queries can still run.
+        await db.rollback()
 
     # 3. SQL keyword search on applications
     keywords = [w for w in message.split() if len(w) > 3]
