@@ -151,9 +151,9 @@ function Select({
   );
 }
 
-// ── Delete Confirmation ───────────────────────────────────────────────────────
+// ── Delete Confirmation — shared between card + table view ───────────────────
 
-function DeleteConfirmRow({
+function DeleteConfirmInline({
   app,
   onConfirm,
   onCancel,
@@ -163,27 +163,25 @@ function DeleteConfirmRow({
   onCancel: () => void;
 }) {
   return (
-    <tr className="bg-destructive/10">
-      <td colSpan={8} className="px-4 py-3">
-        <div className="flex items-center gap-4 text-sm">
-          <span className="text-foreground">
-            Delete <strong>{app.company}</strong> — {app.job_title}?
-          </span>
-          <button
-            onClick={onConfirm}
-            className="rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:opacity-90"
-          >
-            Delete
-          </button>
-          <button
-            onClick={onCancel}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Cancel
-          </button>
-        </div>
-      </td>
-    </tr>
+    <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+      <p className="text-sm text-foreground mb-3">
+        Delete <strong>{app.company}</strong> — {app.job_title}?
+      </p>
+      <div className="flex gap-2">
+        <button
+          onClick={onConfirm}
+          className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:opacity-90"
+        >
+          Delete
+        </button>
+        <button
+          onClick={onCancel}
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -359,36 +357,99 @@ export default function ApplicationsPage() {
         </div>
       )}
 
-      {/* Table */}
-      <div className="rounded-lg border border-border overflow-hidden">
+      {/* ── Mobile card list (hidden on md+) ─────────────────────────────────── */}
+      <div className="md:hidden space-y-3">
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card p-4 space-y-3">
+              <div className="h-4 w-1/2 animate-pulse rounded bg-muted/50" />
+              <div className="h-3 w-3/4 animate-pulse rounded bg-muted/50" />
+              <div className="h-3 w-1/3 animate-pulse rounded bg-muted/50" />
+            </div>
+          ))
+        ) : applications.length === 0 ? (
+          <div className="py-16 text-center text-muted-foreground">
+            <span className="text-3xl">📭</span>
+            <p className="mt-2">No applications found</p>
+            <Link href="/applications/new" className="text-primary hover:underline text-sm">
+              Add your first application
+            </Link>
+          </div>
+        ) : (
+          applications.map((app) => (
+            <div key={app.id}>
+              {pendingDelete === app.id ? (
+                <DeleteConfirmInline
+                  app={app}
+                  onConfirm={() => handleDelete(app.id)}
+                  onCancel={() => setPendingDelete(null)}
+                />
+              ) : (
+                <div
+                  className="rounded-xl border border-border bg-card p-4 space-y-3 cursor-pointer hover:bg-muted/20 transition-colors active:scale-[0.99]"
+                  onClick={() => router.push(`/applications/${app.id}`)}
+                >
+                  {/* Top row: company + status */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground truncate">{app.company}</p>
+                      <p className="text-sm text-muted-foreground truncate">{app.job_title}</p>
+                    </div>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <StatusSelect
+                        status={app.status}
+                        updating={statusUpdating.has(app.id)}
+                        onChange={(v) => handleStatusChange(app.id, v)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Meta row */}
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>{formatDate(app.date_applied)}</span>
+                    {app.source && <span className="capitalize">{app.source}</span>}
+                    {app.location && <span>{app.location}</span>}
+                  </div>
+
+                  {/* Skills */}
+                  {app.skills.length > 0 && <SkillPills skills={app.skills} />}
+
+                  {/* Actions */}
+                  <div
+                    className="flex items-center gap-4 pt-1 text-sm"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Link href={`/applications/${app.id}`} className="text-primary hover:underline">
+                      View
+                    </Link>
+                    <button
+                      onClick={() => setPendingDelete(app.id)}
+                      className="text-destructive hover:opacity-80"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* ── Desktop table (hidden on mobile) ─────────────────────────────────── */}
+      <div className="hidden md:block rounded-lg border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Company
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Role
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Date Applied
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Source
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Location
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Skills
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                  Actions
-                </th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Company</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Role</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Date Applied</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground hidden lg:table-cell">Source</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground hidden lg:table-cell">Location</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground hidden lg:table-cell">Skills</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -404,17 +465,11 @@ export default function ApplicationsPage() {
                 ))
               ) : applications.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={8}
-                    className="px-4 py-16 text-center text-muted-foreground"
-                  >
+                  <td colSpan={8} className="px-4 py-16 text-center text-muted-foreground">
                     <div className="flex flex-col items-center gap-2">
                       <span className="text-3xl">📭</span>
                       <p>No applications found</p>
-                      <Link
-                        href="/applications/new"
-                        className="text-primary hover:underline text-sm"
-                      >
+                      <Link href="/applications/new" className="text-primary hover:underline text-sm">
                         Add your first application
                       </Link>
                     </div>
@@ -428,51 +483,23 @@ export default function ApplicationsPage() {
                       className="border-b border-border hover:bg-muted/20 transition-colors cursor-pointer"
                       onClick={() => router.push(`/applications/${app.id}`)}
                     >
-                      <td className="px-4 py-3 font-medium text-foreground">
-                        {app.company}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {app.job_title}
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                      <td className="px-4 py-3 font-medium text-foreground">{app.company}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{app.job_title}</td>
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <StatusSelect
                           status={app.status}
                           updating={statusUpdating.has(app.id)}
                           onChange={(v) => handleStatusChange(app.id, v)}
                         />
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {formatDate(app.date_applied)}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {app.source ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {app.location ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <SkillPills skills={app.skills} />
-                      </td>
-                      <td
-                        className="px-4 py-3"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                      <td className="px-4 py-3 text-muted-foreground">{formatDate(app.date_applied)}</td>
+                      <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{app.source ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{app.location ?? "—"}</td>
+                      <td className="px-4 py-3 hidden lg:table-cell"><SkillPills skills={app.skills} /></td>
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
-                          <Link
-                            href={`/applications/${app.id}`}
-                            className="text-primary hover:underline"
-                          >
-                            View
-                          </Link>
-                          <button
-                            onClick={() => setPendingDelete(app.id)}
-                            className="text-destructive hover:opacity-80"
-                          >
-                            Delete
-                          </button>
+                          <Link href={`/applications/${app.id}`} className="text-primary hover:underline">View</Link>
+                          <button onClick={() => setPendingDelete(app.id)} className="text-destructive hover:opacity-80">Delete</button>
                         </div>
                       </td>
                     </tr>,
@@ -480,12 +507,15 @@ export default function ApplicationsPage() {
 
                   if (pendingDelete === app.id) {
                     rows.push(
-                      <DeleteConfirmRow
-                        key={`${app.id}-confirm`}
-                        app={app}
-                        onConfirm={() => handleDelete(app.id)}
-                        onCancel={() => setPendingDelete(null)}
-                      />
+                      <tr key={`${app.id}-confirm`} className="bg-destructive/10">
+                        <td colSpan={8} className="px-4 py-3">
+                          <div className="flex items-center gap-4 text-sm">
+                            <span>Delete <strong>{app.company}</strong> — {app.job_title}?</span>
+                            <button onClick={() => handleDelete(app.id)} className="rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:opacity-90">Delete</button>
+                            <button onClick={() => setPendingDelete(null)} className="text-muted-foreground hover:text-foreground">Cancel</button>
+                          </div>
+                        </td>
+                      </tr>
                     );
                   }
 

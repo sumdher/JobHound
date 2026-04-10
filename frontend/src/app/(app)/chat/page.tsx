@@ -148,7 +148,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col">
+    <div className="flex h-[calc(100dvh-9rem)] md:h-[calc(100vh-7rem)] flex-col">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <div>
