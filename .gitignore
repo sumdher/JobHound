@@ -1,5 +1,9 @@
 # JobHound .gitignore
 
+# added by sudheer
+.secrets_pette
+.commands
+
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

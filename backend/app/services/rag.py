@@ -161,7 +161,14 @@ async def stream_chat(
 
     messages.append(Message(role="user", content=message))
 
-    # 7. Stream from LLM
+    # 7. Save user message BEFORE streaming so it always gets an earlier
+    #    created_at than the assistant message (same-tx timestamps cause
+    #    non-deterministic ordering in history queries).
+    user_msg = ChatMessage(user_id=user_id, role="user", content=message)
+    db.add(user_msg)
+    await db.commit()
+
+    # 8. Stream from LLM
     provider = get_llm_provider(config)
     full_response = []
 
@@ -169,11 +176,9 @@ async def stream_chat(
         full_response.append(token)
         yield token
 
-    # 8. Store user message + assistant response
-    user_msg = ChatMessage(user_id=user_id, role="user", content=message)
+    # 9. Save assistant response
     assistant_msg = ChatMessage(
         user_id=user_id, role="assistant", content="".join(full_response)
     )
-    db.add(user_msg)
     db.add(assistant_msg)
     await db.commit()

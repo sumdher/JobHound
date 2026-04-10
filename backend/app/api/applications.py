@@ -276,12 +276,13 @@ async def list_applications(
     )
     total = count_result.scalar_one()
 
-    # Sorting
-    sort_col = _SORT_COLUMNS.get(sort_by or "created_at", Application.created_at)
+    # Sorting — always add created_at DESC as a tiebreaker so same-date
+    # applications appear in a stable, predictable order.
+    sort_col = _SORT_COLUMNS.get(sort_by or "date_applied", Application.date_applied)
     if sort_order == "asc":
-        base_query = base_query.order_by(sort_col.asc())  # type: ignore[union-attr]
+        base_query = base_query.order_by(sort_col.asc(), Application.created_at.desc())  # type: ignore[union-attr]
     else:
-        base_query = base_query.order_by(sort_col.desc())  # type: ignore[union-attr]
+        base_query = base_query.order_by(sort_col.desc(), Application.created_at.desc())  # type: ignore[union-attr]
 
     # Pagination with eager-loaded relationships
     offset = (page - 1) * page_size
@@ -303,6 +304,76 @@ async def list_applications(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get(
+    "/export",
+    summary="Export applications as JSON",
+    description=(
+        "Returns all matching applications as a structured JSON export. "
+        "Supports multi-value status, source, and work_mode filters. "
+        "Use count_only=true for a fast COUNT query without fetching rows."
+    ),
+)
+async def export_applications(
+    status: Optional[list[str]] = Query(default=None),
+    source: Optional[list[str]] = Query(default=None),
+    work_mode: Optional[list[str]] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    count_only: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Export all applications matching the given filters."""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    base_filters = [
+        Application.user_id == current_user.id,
+        Application.is_deleted.is_(False),
+    ]
+    if status:
+        base_filters.append(Application.status.in_(status))
+    if source:
+        base_filters.append(Application.source.in_(source))
+    if work_mode:
+        base_filters.append(Application.work_mode.in_(work_mode))
+    if date_from:
+        base_filters.append(Application.date_applied >= date_from)
+    if date_to:
+        base_filters.append(Application.date_applied <= date_to)
+    if search:
+        term = f"%{search}%"
+        base_filters.append(
+            or_(Application.company.ilike(term), Application.job_title.ilike(term))
+        )
+
+    base_query = select(Application).where(and_(*base_filters))
+
+    if count_only:
+        count_result = await db.execute(
+            select(func.count()).select_from(base_query.subquery())
+        )
+        return {"total": count_result.scalar_one()}
+
+    result = await db.execute(
+        base_query.options(
+            selectinload(Application.application_skills).selectinload(ApplicationSkill.skill),
+            selectinload(Application.status_history),
+        ).order_by(Application.date_applied.desc())
+    )
+    applications = result.scalars().unique().all()
+
+    logger.info("Applications exported", user_id=str(current_user.id), count=len(applications))
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "total": len(applications),
+        "applications": [
+            _build_application_response(a).model_dump(mode="json")
+            for a in applications
+        ],
+    }
 
 
 @router.get(

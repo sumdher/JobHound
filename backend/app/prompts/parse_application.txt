@@ -9,10 +9,10 @@ Extract these fields (use null for anything not mentioned or uncertain):
 - company (string): The company name
 - job_title (string): The job/role title
 - date_applied (string|null): ISO date format YYYY-MM-DD. Resolve relative expressions using today's date above. null only if truly no date information is present.
-- source (string|null): Where the job was found — one of: linkedin, indeed, company_site, referral, glassdoor, other. Look for mentions like "on LinkedIn", "via Indeed", "through a referral", etc. null if unknown.
+- source (string|null): Where the job was found. Return EXACTLY one of these lowercase values: "linkedin", "indeed", "glassdoor", "company_site", "referral", "other". Examples: "applied on LinkedIn" → "linkedin", "found on Indeed" → "indeed", "through a referral" → "referral", "company website" → "company_site". null only if truly not mentioned.
 - location (string|null): City, country or "Remote" if mentioned
 - work_mode (string|null): One of: remote, hybrid, onsite. null if not mentioned.
-- whats_in_it_for_me (string|null): Key benefits, growth opportunities, or interesting aspects. Summarize if mentioned.
+- whats_in_it_for_me (string|null): Things the user personally says they like or find appealing — capture their own words/sentiment only. Example: "I like the office: they have cats" → "Likes the office, they have cats". Do NOT summarize the job description or list company benefits. null if the user expresses no personal interest.
 - salary_min (integer|null): Minimum salary in CENTS in EUR. Always convert to EUR. E.g. €80,000 → 8000000, £85,000 → approx 10200000. null if not mentioned.
 - salary_max (integer|null): Maximum salary in CENTS in EUR. Always convert to EUR. null if not mentioned.
 - salary_currency (string): Always "EUR" (store converted value). If original was a different currency, mention it in notes.

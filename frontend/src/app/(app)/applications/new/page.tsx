@@ -9,12 +9,71 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { parseApplication, createApplication } from "@/lib/api";
 import { cn, STATUS_LABELS } from "@/lib/utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const PARSE_LOADING_PHRASES = [
+  "Consulting the oracle fr fr...",
+  "Manifesting an answer...",
+  "Doing the math (allegedly)...",
+  "Touching grass (digitally)...",
+  "Big brain moment loading...",
+  "Running vibes check...",
+  "Decoding your job hunt arc...",
+  "Summoning the thinking hat overlords...",
+  "No cap, thinking hard...",
+  "Respectfully asking the model...",
+  "Slay-mining your applications...",
+  "Convinced 1 neural net so far...",
+  "Lowkey going through the data...",
+  // Viking-style
+  "Reading the runes...",
+  "Charting a course through your data...",
+  "Testing the winds before we sail...",
+  "A brief raid on the problem space...",
+  "Forging a cleaner signal...",
+  "Letting the dust settle before the verdict...",
+  "Scanning the horizon for answers...",
+  "Following the northern star of logic...",
+  "Sounding the depths of your data...",
+  "Plotting a steady course...",
+  "Reading the tide before deciding...",
+  "Keeping the longship on course...",
+  "Mapping unknown waters...",
+  "Testing the strength of this idea...",
+  "Tracing the fault lines...",
+  "Measuring twice, sailing once...",
+  "Letting the fog clear...",
+  "Anchoring on first principles...",
+  "Watching the currents shift...",
+  "Taking bearings from the signal...",
+  "Crossing open water—stand by...",
+  "Quietly sharpening the edge...",
+  "Waiting for the right wind...",
+  "Marking a clean path forward...",
+  "Holding steady through noise...",
+  "Finding a truer north...",
+  // Smart / punny
+  "Applying some Bayesian optimism...",
+  "Minimizing regret (and loss functions)...",
+  "Gradient descending into clarity...",
+  "Reducing uncertainty, one bit at a time...",
+  "Searching for a local maximum of insight...",
+  "Compiling thoughts, no warnings so far...",
+  "Cache miss—thinking from first principles...",
+  "Running a quick sanity check...",
+  "Normalizing expectations...",
+  "Adding a touch of regularization...",
+  "Converging… slowly but surely...",
+  "Estimating, then overestimating confidence...",
+  "Turning data into opinions...",
+  "Proof by computation in progress...",
+  "Finding signal in polite noise...",
+];
 
 const SOURCES = [
   "LinkedIn",
@@ -497,16 +556,48 @@ export default function NewApplicationPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Rotating loading phrase while parsing
+  const [parsePhrase, setParsePhrase] = useState("");
+  useEffect(() => {
+    if (!parsing) { setParsePhrase(""); return; }
+    const pick = () =>
+      setParsePhrase(PARSE_LOADING_PHRASES[Math.floor(Math.random() * PARSE_LOADING_PHRASES.length)]);
+    pick();
+    const id = setInterval(pick, 2500);
+    return () => clearInterval(id);
+  }, [parsing]);
+
+  function handleStartFresh() {
+    setParsed(false);
+    setRawText("");
+    setFormData(EMPTY_FORM);
+    setSkills([]);
+    setUncertainFields([]);
+    setParseError(null);
+    setSaveError(null);
+  }
+
   function updateField(field: keyof FormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   }
 
+  function handleInterrupt() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setParsing(false);
+    setParseError(null);
+  }
+
   async function handleParse() {
     if (!rawText.trim()) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setParsing(true);
     setParseError(null);
     try {
-      const result = await parseApplication(rawText);
+      const result = await parseApplication(rawText, controller.signal);
       const p = result.parsed;
 
       // Map parsed fields onto form
@@ -534,9 +625,11 @@ export default function NewApplicationPage() {
       setUncertainFields(result.uncertain_fields ?? []);
       setParsed(true);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
       setParseError(err instanceof Error ? err.message : "Parsing failed");
     } finally {
       setParsing(false);
+      abortRef.current = null;
     }
   }
 
@@ -617,28 +710,52 @@ export default function NewApplicationPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleParse}
-                disabled={parsing || !rawText.trim()}
-                className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
-              >
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
                 {parsing ? (
                   <>
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                    </svg>
-                    Parsing...
+                    <button
+                      disabled
+                      className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground opacity-60 cursor-not-allowed"
+                    >
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Parsing...
+                    </button>
+                    <button
+                      onClick={handleInterrupt}
+                      className="flex items-center gap-1.5 rounded-lg bg-secondary px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12" rx="1" />
+                      </svg>
+                      Interrupt
+                    </button>
                   </>
                 ) : (
-                  "Parse with AI"
+                  <>
+                    <button
+                      onClick={handleParse}
+                      disabled={!rawText.trim()}
+                      className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+                    >
+                      Parse with AI
+                    </button>
+                    {parsed && (
+                      <span className="text-sm text-green-400">
+                        Parsed successfully — review the form below
+                      </span>
+                    )}
+                  </>
                 )}
-              </button>
-              {parsed && (
-                <span className="text-sm text-green-400">
-                  Parsed successfully — review the form below
-                </span>
+              </div>
+              {parsing && parsePhrase && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <span className="italic">{parsePhrase}</span>
+                </div>
               )}
             </div>
           </div>
@@ -646,9 +763,17 @@ export default function NewApplicationPage() {
           {/* Pre-filled form after parse */}
           {parsed && (
             <div className="rounded-lg border border-border bg-card p-5">
-              <h2 className="text-sm font-semibold text-foreground mb-4">
-                Review &amp; Save
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-foreground">
+                  Review &amp; Save
+                </h2>
+                <button
+                  onClick={handleStartFresh}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                >
+                  ↩ Start Fresh
+                </button>
+              </div>
               <ApplicationForm
                 formData={formData}
                 skills={skills}

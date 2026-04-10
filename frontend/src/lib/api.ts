@@ -46,7 +46,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function apiFetch<T>(
+export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
@@ -173,18 +173,69 @@ export async function deleteApplication(id: string): Promise<void> {
   return apiFetch<void>(`/api/applications/${id}`, { method: "DELETE" });
 }
 
+export interface ExportFilters {
+  status?: string[];
+  source?: string[];
+  work_mode?: string[];
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+}
+
+function buildExportQuery(filters: ExportFilters, countOnly = false): string {
+  const p = new URLSearchParams();
+  filters.status?.forEach((s) => p.append("status", s));
+  filters.source?.forEach((s) => p.append("source", s));
+  filters.work_mode?.forEach((m) => p.append("work_mode", m));
+  if (filters.date_from) p.set("date_from", filters.date_from);
+  if (filters.date_to) p.set("date_to", filters.date_to);
+  if (filters.search) p.set("search", filters.search);
+  if (countOnly) p.set("count_only", "true");
+  return p.toString();
+}
+
+export async function countExportApplications(filters: ExportFilters): Promise<number> {
+  const qs = buildExportQuery(filters, true);
+  const res = await apiFetch<{ total: number }>(`/api/applications/export?${qs}`);
+  return res.total;
+}
+
+export async function exportApplications(
+  filters: ExportFilters
+): Promise<{ exported_at: string; total: number; applications: Application[] }> {
+  const qs = buildExportQuery(filters, false);
+  return apiFetch(`/api/applications/export?${qs}`);
+}
+
 export interface ParseResponse {
   parsed: Record<string, unknown>;
   uncertain_fields: string[];
   skills: string[];
 }
 
-export async function parseApplication(text: string): Promise<ParseResponse> {
+export async function parseApplication(text: string, signal?: AbortSignal): Promise<ParseResponse> {
   const llmConfig = getLLMConfig();
-  return apiFetch<ParseResponse>("/api/applications/parse", {
+  const authHeaders = await getAuthHeaders();
+
+  // Use the Next.js route handler (/api/parse) instead of the rewrite proxy
+  // (/backend/api/applications/parse) — same reason as /api/chat: rewrites
+  // buffer the full response before forwarding, causing Cloudflare 524 timeouts.
+  const res = await fetch("/api/parse", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ text, ...llmConfig }),
+    signal,
   });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((error as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+
+  return res.json() as Promise<ParseResponse>;
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
@@ -285,27 +336,36 @@ export async function clearChatHistory(): Promise<void> {
   return apiFetch<void>("/api/chat/history", { method: "DELETE" });
 }
 
-/** Stream chat response as SSE. Returns an EventSource-like async iterator. */
+/** Stream chat response as SSE. Pass an AbortSignal to support mid-stream cancellation. */
 export async function streamChat(
   message: string,
   onToken: (token: string) => void,
   onDone: () => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   const llmConfig = getLLMConfig();
 
-  // Use the Next.js route handler (/api/chat) instead of the rewrite proxy
-  // (/backend/api/chat) — the route handler pipes SSE in real-time, while
-  // rewrites buffer the entire response before forwarding (Cloudflare 524).
-  const res = await fetch(`/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders,
-    },
-    body: JSON.stringify({ message, ...llmConfig }),
-  });
+  let res: Response;
+  try {
+    // Use the Next.js route handler (/api/chat) instead of the rewrite proxy
+    // (/backend/api/chat) — the route handler pipes SSE in real-time, while
+    // rewrites buffer the entire response before forwarding (Cloudflare 524).
+    res = await fetch(`/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ message, ...llmConfig }),
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    onError(e instanceof Error ? e.message : "Request failed");
+    return;
+  }
 
   if (!res.ok || !res.body) {
     onError(`HTTP ${res.status}`);
@@ -316,33 +376,38 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") {
-          onDone();
-          return;
-        }
-        try {
-          const parsed = JSON.parse(data) as { token?: string; error?: string };
-          if (parsed.error) {
-            onError(parsed.error);
-          } else if (parsed.token) {
-            onToken(parsed.token);
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") {
+            onDone();
+            return;
           }
-        } catch {
-          // ignore parse errors
+          try {
+            const parsed = JSON.parse(data) as { token?: string; error?: string };
+            if (parsed.error) {
+              onError(parsed.error);
+            } else if (parsed.token) {
+              onToken(parsed.token);
+            }
+          } catch {
+            // ignore parse errors
+          }
         }
       }
     }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    throw e;
   }
 
   onDone();

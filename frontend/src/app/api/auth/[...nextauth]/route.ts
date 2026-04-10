@@ -31,11 +31,12 @@ const handler = NextAuth({
     async jwt({
       token,
       account,
-      user,
+      trigger,
     }: {
       token: JWT;
       account: Account | null;
       user: User;
+      trigger?: string;
     }) {
       // On first sign-in, exchange Google ID token for backend JWT
       if (account?.id_token) {
@@ -60,6 +61,22 @@ const handler = NextAuth({
           console.error("Backend auth exchange failed", e);
         }
       }
+
+      // On explicit update() call (e.g. after admin approval), re-fetch status
+      if (trigger === "update" && token.accessToken) {
+        try {
+          const res = await fetch(`${API_URL}/api/auth/status`, {
+            headers: { Authorization: `Bearer ${String(token.accessToken)}` },
+          });
+          if (res.ok) {
+            const data = (await res.json()) as { status: string };
+            token.userStatus = data.status;
+          }
+        } catch {
+          // Non-critical — keep existing token as-is
+        }
+      }
+
       return token;
     },
 

@@ -18,6 +18,54 @@ logger = structlog.get_logger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+# Normalize whatever the LLM returns → canonical source value
+_SOURCE_ALIASES: dict[str, str] = {
+    "linkedin": "linkedin",
+    "linked in": "linkedin",
+    "indeed": "indeed",
+    "glassdoor": "glassdoor",
+    "glass door": "glassdoor",
+    "referral": "referral",
+    "referred": "referral",
+    "company site": "company_site",
+    "company website": "company_site",
+    "company_site": "company_site",
+    "company_website": "company_site",
+    "companysite": "company_site",
+    "other": "other",
+}
+
+
+def _normalize_source(value: object) -> str | None:
+    if not value:
+        return None
+    key = str(value).strip().lower()
+    return _SOURCE_ALIASES.get(key, "other" if key else None)
+
+
+# Keyword scan used as fallback when LLM returns null for source
+_SOURCE_KEYWORDS: list[tuple[str, str]] = [
+    ("linkedin", "linkedin"),
+    ("linked-in", "linkedin"),
+    ("indeed", "indeed"),
+    ("glassdoor", "glassdoor"),
+    ("glass door", "glassdoor"),
+    ("referral", "referral"),
+    ("referred by", "referral"),
+    ("company site", "company_site"),
+    ("company website", "company_site"),
+    ("careers page", "company_site"),
+    ("careers site", "company_site"),
+]
+
+
+def _detect_source_from_text(text: str) -> str | None:
+    lower = text.lower()
+    for keyword, source in _SOURCE_KEYWORDS:
+        if keyword in lower:
+            return source
+    return None
+
 
 def _load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text()
@@ -148,6 +196,9 @@ async def parse_application(text: str, config: LLMConfig | None = None) -> dict:
     if not result.get("date_applied"):
         result["date_applied"] = date.today().isoformat()
         result.setdefault("uncertain_fields", []).append("date_applied")
+
+    # Normalize source; if LLM missed it, fall back to keyword scan on raw text
+    result["source"] = _normalize_source(result.get("source")) or _detect_source_from_text(text)
 
     result.setdefault("uncertain_fields", [])
     result.setdefault("salary_currency", "EUR")

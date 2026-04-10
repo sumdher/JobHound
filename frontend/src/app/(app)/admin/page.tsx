@@ -122,7 +122,7 @@ export default function AdminPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {(["all", "pending", "approved", "rejected"] as StatusFilter[]).map(
           (s) => (
             <div
@@ -175,7 +175,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* User table */}
+      {/* User list */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16">
@@ -186,7 +186,7 @@ export default function AdminPage() {
             No {filter === "all" ? "" : filter} users found.
           </div>
         ) : (
-          <table className="w-full">
+          <table className="w-full hidden md:table">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-4 py-3 text-left">User</th>
@@ -320,6 +320,66 @@ export default function AdminPage() {
               })}
             </tbody>
           </table>
+        )}
+
+        {/* Mobile card list */}
+        {!loading && filtered.length > 0 && (
+          <div className="md:hidden divide-y divide-border">
+            {filtered.map((user) => {
+              const busy = actionLoading.has(user.id);
+              const isAdminSelf = user.email === session.user?.email;
+              return (
+                <div
+                  key={user.id}
+                  className={`p-4 space-y-3 ${isAdminSelf ? "opacity-50" : ""}`}
+                >
+                  {/* User info */}
+                  <div className="flex items-center gap-3">
+                    {user.avatar_url ? (
+                      <Image src={user.avatar_url} alt={user.name ?? user.email} width={36} height={36} className="rounded-full shrink-0" />
+                    ) : (
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-bold text-primary">
+                        {(user.name ?? user.email)[0].toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{user.name ?? "—"}</p>
+                        {isAdminSelf && (
+                          <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-xs font-semibold text-primary shrink-0">You</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    </div>
+                    <span className={`ml-auto shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[user.status] ?? ""}`}>
+                      {user.status}
+                    </span>
+                  </div>
+
+                  {/* Meta */}
+                  <p className="text-xs text-muted-foreground">
+                    {user.application_count} app{user.application_count !== 1 ? "s" : ""} · Joined {new Date(user.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                  </p>
+
+                  {/* Actions */}
+                  {!isAdminSelf && (
+                    <div className="flex flex-wrap gap-2">
+                      {user.status !== "approved" && (
+                        <button disabled={busy} onClick={() => handleStatusChange(user.id, "approved")} className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-50">Approve</button>
+                      )}
+                      {user.status !== "rejected" && (
+                        <button disabled={busy} onClick={() => handleStatusChange(user.id, "rejected")} className="rounded-md bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500 disabled:opacity-50">Reject</button>
+                      )}
+                      {user.status !== "pending" && (
+                        <button disabled={busy} onClick={() => handleStatusChange(user.id, "pending")} className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50">Revoke</button>
+                      )}
+                      <button disabled={busy} onClick={() => handleDelete(user)} className="rounded-md bg-red-600/80 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50">Delete</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
