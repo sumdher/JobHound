@@ -18,6 +18,30 @@ logger = structlog.get_logger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+# Normalize whatever the LLM returns → canonical source value
+_SOURCE_ALIASES: dict[str, str] = {
+    "linkedin": "linkedin",
+    "linked in": "linkedin",
+    "indeed": "indeed",
+    "glassdoor": "glassdoor",
+    "glass door": "glassdoor",
+    "referral": "referral",
+    "referred": "referral",
+    "company site": "company_site",
+    "company website": "company_site",
+    "company_site": "company_site",
+    "company_website": "company_site",
+    "companysite": "company_site",
+    "other": "other",
+}
+
+
+def _normalize_source(value: object) -> str | None:
+    if not value:
+        return None
+    key = str(value).strip().lower()
+    return _SOURCE_ALIASES.get(key, "other" if key else None)
+
 
 def _load_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text()
@@ -148,6 +172,9 @@ async def parse_application(text: str, config: LLMConfig | None = None) -> dict:
     if not result.get("date_applied"):
         result["date_applied"] = date.today().isoformat()
         result.setdefault("uncertain_fields", []).append("date_applied")
+
+    # Normalize source regardless of LLM capitalization/wording
+    result["source"] = _normalize_source(result.get("source"))
 
     result.setdefault("uncertain_fields", [])
     result.setdefault("salary_currency", "EUR")
