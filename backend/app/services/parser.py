@@ -105,7 +105,12 @@ async def parse_application(text: str, config: LLMConfig | None = None) -> dict:
     provider = get_llm_provider(config)
 
     # ── 1. Field extraction ───────────────────────────────────────────────────
-    parse_prompt = _load_prompt("parse_application.txt").replace("{text}", text)
+    today = date.today().isoformat()
+    parse_prompt = (
+        _load_prompt("parse_application.txt")
+        .replace("{today}", today)
+        .replace("{text}", text)
+    )
     parse_messages = [
         Message(
             role="system",
