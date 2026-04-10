@@ -116,6 +116,7 @@ interface FormData {
   cv_link: string;
   cl_link: string;
   notes: string;
+  rejection_reason: string;
   raw_input: string;
 }
 
@@ -135,6 +136,7 @@ const EMPTY_FORM: FormData = {
   cv_link: "",
   cl_link: "",
   notes: "",
+  rejection_reason: "",
   raw_input: "",
 };
 
@@ -508,6 +510,19 @@ function ApplicationForm({
         />
       </div>
 
+      {/* Rejection Reason */}
+      {formData.status === "rejected" && (
+        <div>
+          <Label>Rejection Reason</Label>
+          <Textarea
+            value={formData.rejection_reason}
+            onChange={(v) => onChange("rejection_reason", v)}
+            placeholder="Why was this application rejected? (no feedback, skills mismatch, etc.)"
+            rows={2}
+          />
+        </div>
+      )}
+
       {/* Skills */}
       <div>
         <Label>Skills</Label>
@@ -619,6 +634,7 @@ export default function NewApplicationPage() {
         cv_link: String(p.cv_link ?? ""),
         cl_link: String(p.cl_link ?? ""),
         notes: String(p.notes ?? ""),
+        rejection_reason: String(p.rejection_reason ?? ""),
         raw_input: rawText,
       });
       setSkills(result.skills ?? []);
@@ -647,6 +663,7 @@ export default function NewApplicationPage() {
         salary_min: formData.salary_min ? Math.round(Number(formData.salary_min) * 100) : undefined,
         salary_max: formData.salary_max ? Math.round(Number(formData.salary_max) * 100) : undefined,
         raw_input: formData.raw_input || rawText || undefined,
+        rejection_reason: formData.rejection_reason || undefined,
       };
 
       // Remove empty strings

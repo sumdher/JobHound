@@ -69,6 +69,7 @@ interface EditState {
   cv_link: string;
   cl_link: string;
   notes: string;
+  rejection_reason: string;
   skills: string[];
 }
 
@@ -89,6 +90,7 @@ function toEditState(app: Application): EditState {
     cv_link: app.cv_link ?? "",
     cl_link: app.cl_link ?? "",
     notes: app.notes ?? "",
+    rejection_reason: app.rejection_reason ?? "",
     skills: [...app.skills],
   };
 }
@@ -406,6 +408,7 @@ export default function ApplicationDetailPage() {
         cv_link: editState.cv_link || null,
         cl_link: editState.cl_link || null,
         notes: editState.notes || null,
+        rejection_reason: editState.rejection_reason || null,
         skills: editState.skills,
       };
       const updated = await updateApplication(app.id, payload);
@@ -817,6 +820,27 @@ export default function ApplicationDetailPage() {
             <p className="text-sm text-foreground whitespace-pre-wrap">
               {app.notes}
             </p>
+          )}
+        </SectionCard>
+      )}
+
+      {/* Rejection Reason */}
+      {(app.status === "rejected" || editing) && (
+        <SectionCard title="Rejection Reason">
+          {editing && es ? (
+            <textarea
+              value={es.rejection_reason}
+              onChange={(e) => setField("rejection_reason", e.target.value)}
+              rows={3}
+              placeholder="Why was this application rejected? (no feedback, skills mismatch, etc.)"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+            />
+          ) : app.rejection_reason ? (
+            <p className="text-sm text-foreground whitespace-pre-wrap">
+              {app.rejection_reason}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">No rejection reason recorded.</p>
           )}
         </SectionCard>
       )}

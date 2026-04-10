@@ -53,6 +53,7 @@ class ApplicationBase(BaseModel):
     cl_link: Optional[str] = None
     job_url: Optional[str] = None
     notes: Optional[str] = None
+    rejection_reason: Optional[str] = None
     raw_input: Optional[str] = None
 
 
@@ -97,6 +98,7 @@ class ApplicationUpdate(BaseModel):
     cl_link: Optional[str] = None
     job_url: Optional[str] = None
     notes: Optional[str] = None
+    rejection_reason: Optional[str] = None
     raw_input: Optional[str] = None
     skills: Optional[list[str]] = None
     job_description: Optional[str] = None

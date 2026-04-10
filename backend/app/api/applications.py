@@ -93,6 +93,7 @@ def _build_application_response(app: Application) -> ApplicationResponse:
         "cl_link": app.cl_link,
         "job_url": app.job_url,
         "notes": app.notes,
+        "rejection_reason": app.rejection_reason,
         "raw_input": app.raw_input,
         "skills": skill_names,
         "status_history": history,

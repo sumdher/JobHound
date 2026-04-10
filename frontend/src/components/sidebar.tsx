@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/applications", label: "Applications", icon: "📋" },
   { href: "/applications/new", label: "New Application", icon: "✚" },
   { href: "/chat", label: "AI Chat", icon: "💬" },
+  { href: "/profile", label: "My Profile", icon: "👤" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 

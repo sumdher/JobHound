@@ -6,7 +6,7 @@ One user can have many applications and chat messages.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,7 @@ class User(Base):
         String(20), nullable=False, server_default="pending"
     )
     llm_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cv_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

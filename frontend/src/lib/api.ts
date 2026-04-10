@@ -92,6 +92,7 @@ export interface Application {
   cl_link?: string;
   job_url?: string;
   notes?: string;
+  rejection_reason?: string;
   raw_input?: string;
   skills: string[];
   status_history: StatusHistory[];
@@ -334,6 +335,91 @@ export async function getChatHistory(): Promise<
 
 export async function clearChatHistory(): Promise<void> {
   return apiFetch<void>("/api/chat/history", { method: "DELETE" });
+}
+
+// ── CV / Profile ─────────────────────────────────────────────────────────────
+
+export async function getCv(): Promise<{ cv_text: string }> {
+  return apiFetch("/api/user/cv");
+}
+
+export async function saveCvText(cv_text: string): Promise<{ cv_text: string }> {
+  return apiFetch("/api/user/cv", {
+    method: "PUT",
+    body: JSON.stringify({ cv_text }),
+  });
+}
+
+export async function uploadCvPdf(file: File): Promise<{ cv_text: string; pages: number }> {
+  const authHeaders = await getAuthHeaders();
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_URL}/api/user/cv/pdf`, {
+    method: "POST",
+    headers: { ...authHeaders },
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((error as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function streamCvAnalyze(
+  jobDescription: string,
+  llmConfig: { provider?: string; model?: string; apiKey?: string; baseUrl?: string },
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (error: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+
+  let res: Response;
+  try {
+    res = await fetch("/api/cv-analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ job_description: jobDescription, ...llmConfig }),
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    onError(e instanceof Error ? e.message : "Request failed");
+    return;
+  }
+
+  if (!res.ok || !res.body) { onError(`HTTP ${res.status}`); return; }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") { onDone(); return; }
+          try {
+            const parsed = JSON.parse(data) as { token?: string; error?: string };
+            if (parsed.error) onError(parsed.error);
+            else if (parsed.token) onToken(parsed.token);
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    throw e;
+  }
+  onDone();
 }
 
 /** Stream chat response as SSE. Pass an AbortSignal to support mid-stream cancellation. */
