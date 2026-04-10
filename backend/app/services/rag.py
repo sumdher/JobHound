@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import ChatMessage
+from app.models.chat_session import ChatSession
 from app.services.embedding.factory import get_embedding_provider
 from app.services.llm.base import LLMConfig, Message
 from app.services.llm.factory import get_llm_provider
@@ -22,6 +23,10 @@ from app.services.llm.factory import get_llm_provider
 logger = structlog.get_logger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
 
 
 def _build_context(app_rows: list, chunk_rows: list) -> str:
@@ -62,6 +67,7 @@ async def stream_chat(
     user_id: uuid.UUID,
     db: AsyncSession,
     config: LLMConfig | None = None,
+    session_id: uuid.UUID | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Full RAG pipeline: embed query → vector search → SQL search → LLM stream.
@@ -143,13 +149,24 @@ async def stream_chat(
     # 4. Build context
     context = _build_context(app_rows, chunk_rows)
 
-    # 5. Load recent chat history (last 10 messages)
-    history_result = await db.execute(
+    # 5. Load recent chat history (last 10 messages), filtered by session if provided
+    history_query = (
         select(ChatMessage)
         .where(ChatMessage.user_id == user_id)
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     )
+    if session_id is not None:
+        history_query = (
+            select(ChatMessage)
+            .where(
+                ChatMessage.user_id == user_id,
+                ChatMessage.session_id == session_id,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(10)
+        )
+    history_result = await db.execute(history_query)
     history = list(reversed(history_result.scalars().all()))
 
     # 6. Build message list
@@ -164,21 +181,35 @@ async def stream_chat(
     # 7. Save user message BEFORE streaming so it always gets an earlier
     #    created_at than the assistant message (same-tx timestamps cause
     #    non-deterministic ordering in history queries).
-    user_msg = ChatMessage(user_id=user_id, role="user", content=message)
+    user_msg = ChatMessage(user_id=user_id, role="user", content=message, session_id=session_id)
     db.add(user_msg)
     await db.commit()
 
     # 8. Stream from LLM
     provider = get_llm_provider(config)
-    full_response = []
+    full_response: list[str] = []
 
     async for token in provider.stream(messages, config):
         full_response.append(token)
         yield token
 
     # 9. Save assistant response
+    full_response_text = "".join(full_response)
     assistant_msg = ChatMessage(
-        user_id=user_id, role="assistant", content="".join(full_response)
+        user_id=user_id,
+        role="assistant",
+        content=full_response_text,
+        session_id=session_id,
     )
     db.add(assistant_msg)
     await db.commit()
+
+    # 10. Update session token_count
+    if session_id is not None:
+        session_result = await db.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )
+        session = session_result.scalar_one_or_none()
+        if session is not None:
+            session.token_count += _estimate_tokens(message + full_response_text)
+            await db.commit()

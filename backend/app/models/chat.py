@@ -25,6 +25,12 @@ class ChatMessage(Base):
         nullable=False,
         index=True,
     )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" | "assistant"
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
@@ -33,6 +39,7 @@ class ChatMessage(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="chat_messages")  # type: ignore[name-defined]  # noqa: F821
+    session: Mapped["ChatSession | None"] = relationship("ChatSession", back_populates="messages")  # type: ignore[name-defined]  # noqa: F821
 
     def __repr__(self) -> str:
         return f"<ChatMessage {self.role} user={self.user_id}>"

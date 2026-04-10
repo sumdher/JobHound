@@ -92,6 +92,7 @@ export interface Application {
   cl_link?: string;
   job_url?: string;
   notes?: string;
+  rejection_reason?: string;
   raw_input?: string;
   skills: string[];
   status_history: StatusHistory[];
@@ -324,7 +325,70 @@ export async function deleteUser(userId: string): Promise<void> {
   return apiFetch<void>(`/api/admin/panel/users/${userId}`, { method: "DELETE" });
 }
 
-// ── Chat ────────────────────────────────────────────────────────────────────
+// ── Chat Sessions ────────────────────────────────────────────────────────────
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  token_count: number;
+  max_tokens: number;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export async function listChatSessions(): Promise<ChatSession[]> {
+  return apiFetch<ChatSession[]>("/api/chat/sessions");
+}
+
+export async function createChatSession(): Promise<ChatSession> {
+  return apiFetch<ChatSession>("/api/chat/sessions", { method: "POST" });
+}
+
+export async function renameChatSession(id: string, title: string): Promise<ChatSession> {
+  return apiFetch<ChatSession>(`/api/chat/sessions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteChatSession(id: string): Promise<void> {
+  return apiFetch<void>(`/api/chat/sessions/${id}`, { method: "DELETE" });
+}
+
+export async function getChatSessionHistory(id: string): Promise<{ id: number; role: string; content: string; created_at: string }[]> {
+  return apiFetch(`/api/chat/sessions/${id}/history`);
+}
+
+export async function clearChatSessionHistory(id: string): Promise<void> {
+  return apiFetch<void>(`/api/chat/sessions/${id}/history`, { method: "DELETE" });
+}
+
+// ── CV Analyses ───────────────────────────────────────────────────────────────
+
+export interface CvAnalysis {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export async function listCvAnalyses(): Promise<CvAnalysis[]> {
+  return apiFetch<CvAnalysis[]>("/api/user/cv/analyses");
+}
+
+export async function saveCvAnalysis(title: string, content: string): Promise<CvAnalysis> {
+  return apiFetch<CvAnalysis>("/api/user/cv/analyses", {
+    method: "POST",
+    body: JSON.stringify({ title, content }),
+  });
+}
+
+export async function deleteCvAnalysis(id: string): Promise<void> {
+  return apiFetch<void>(`/api/user/cv/analyses/${id}`, { method: "DELETE" });
+}
+
+// ── Chat (legacy) ─────────────────────────────────────────────────────────────
 
 export async function getChatHistory(): Promise<
   { id: number; role: string; content: string; created_at: string }[]
@@ -336,12 +400,99 @@ export async function clearChatHistory(): Promise<void> {
   return apiFetch<void>("/api/chat/history", { method: "DELETE" });
 }
 
+// ── CV / Profile ─────────────────────────────────────────────────────────────
+
+export async function getCv(): Promise<{ cv_text: string; cv_filename: string | null; cv_uploaded_at: string | null }> {
+  return apiFetch("/api/user/cv");
+}
+
+export async function saveCvText(cv_text: string): Promise<{ cv_text: string }> {
+  return apiFetch("/api/user/cv", {
+    method: "PUT",
+    body: JSON.stringify({ cv_text }),
+  });
+}
+
+export async function uploadCvPdf(file: File): Promise<{ cv_text: string; pages: number; cv_filename: string; cv_uploaded_at: string }> {
+  const authHeaders = await getAuthHeaders();
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_URL}/api/user/cv/pdf`, {
+    method: "POST",
+    headers: { ...authHeaders },
+    body: formData,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((error as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function streamCvAnalyze(
+  jobDescription: string,
+  llmConfig: { provider?: string; model?: string; apiKey?: string; baseUrl?: string },
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (error: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+
+  let res: Response;
+  try {
+    res = await fetch("/api/cv-analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ job_description: jobDescription, ...llmConfig }),
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    onError(e instanceof Error ? e.message : "Request failed");
+    return;
+  }
+
+  if (!res.ok || !res.body) { onError(`HTTP ${res.status}`); return; }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") { onDone(); return; }
+          try {
+            const parsed = JSON.parse(data) as { token?: string; error?: string };
+            if (parsed.error) onError(parsed.error);
+            else if (parsed.token) onToken(parsed.token);
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    throw e;
+  }
+  onDone();
+}
+
 /** Stream chat response as SSE. Pass an AbortSignal to support mid-stream cancellation. */
 export async function streamChat(
   message: string,
   onToken: (token: string) => void,
   onDone: () => void,
+  onMeta: ((meta: { session_id: string; token_count: number }) => void) | undefined,
   onError: (error: string) => void,
+  sessionId?: string,
   signal?: AbortSignal,
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
@@ -358,7 +509,7 @@ export async function streamChat(
         "Content-Type": "application/json",
         ...authHeaders,
       },
-      body: JSON.stringify({ message, ...llmConfig }),
+      body: JSON.stringify({ message, ...llmConfig, ...(sessionId ? { session_id: sessionId } : {}) }),
       signal,
     });
   } catch (e) {
@@ -393,8 +544,84 @@ export async function streamChat(
             return;
           }
           try {
-            const parsed = JSON.parse(data) as { token?: string; error?: string };
-            if (parsed.error) {
+            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number } };
+            if (parsed.meta) {
+              onMeta?.(parsed.meta);
+            } else if (parsed.error) {
+              onError(parsed.error);
+            } else if (parsed.token) {
+              onToken(parsed.token);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    throw e;
+  }
+
+  onDone();
+}
+
+/** Stream a session summarization as SSE. */
+export async function streamSummarize(
+  sessionId: string,
+  onToken: (token: string) => void,
+  onDone: () => void,
+  onError: (error: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const authHeaders = await getAuthHeaders();
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}/summarize`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    onError(e instanceof Error ? e.message : "Request failed");
+    return;
+  }
+
+  if (!res.ok || !res.body) {
+    onError(`HTTP ${res.status}`);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") {
+            onDone();
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number } };
+            if (parsed.meta) {
+              // meta event at end of summarize — ignore tokens, just signal done
+            } else if (parsed.error) {
               onError(parsed.error);
             } else if (parsed.token) {
               onToken(parsed.token);

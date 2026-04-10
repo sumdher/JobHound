@@ -89,6 +89,7 @@ class Application(Base):
 
     # Notes + audit
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Soft delete flag

@@ -37,6 +37,8 @@ dependencies = [
     "python-multipart>=0.0.12",
     "tenacity>=9.0.0",
     "tiktoken>=0.8.0",
+    "pdfplumber>=0.11.0",
+    "pypdf>=4.0.0",
 ]
 
 [project.optional-dependencies]

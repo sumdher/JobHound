@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.models import chat_session, cv_analysis  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
@@ -44,7 +45,7 @@ def create_app() -> FastAPI:
     )
 
     # Routers
-    from app.api import admin, auth, applications, analytics, chat, skills, user_settings
+    from app.api import admin, auth, applications, analytics, chat, skills, user_settings, cv
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
     app.include_router(user_settings.router, prefix="/api/user", tags=["user"])
+    app.include_router(cv.router, prefix="/api/user/cv", tags=["cv"])
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
