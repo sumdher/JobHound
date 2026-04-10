@@ -12,6 +12,18 @@ import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
+function JobHoundLogo({ size = 28 }: { size?: number }) {
+  return (
+    <Image
+      src="/logo.svg"
+      alt="JobHound"
+      width={size}
+      height={size}
+      priority
+    />
+  );
+}
+
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/applications", label: "Applications", icon: "📋" },
@@ -28,7 +40,7 @@ export function Sidebar() {
     <aside className="flex h-full w-64 flex-col border-r border-border bg-card">
       {/* Logo */}
       <div className="flex h-16 items-center gap-2 border-b border-border px-4">
-        <span className="text-2xl">🐾</span>
+        <JobHoundLogo size={30} />
         <span className="text-lg font-bold tracking-tight">JobHound</span>
       </div>
 

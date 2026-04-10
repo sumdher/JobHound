@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import {
   listApplications,
   deleteApplication,
+  updateApplication,
   type Application,
   type ApplicationFilters,
 } from "@/lib/api";
@@ -70,20 +71,45 @@ function SkillPills({ skills }: { skills: string[] }) {
   );
 }
 
-// ── Status Badge ──────────────────────────────────────────────────────────────
+// ── Inline Status Select ──────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
+function StatusSelect({
+  status,
+  updating,
+  onChange,
+}: {
+  status: string;
+  updating: boolean;
+  onChange: (v: string) => void;
+}) {
   const colorClass =
     STATUS_COLORS[status] ?? "bg-muted text-muted-foreground border-border";
   return (
-    <span
+    <select
+      value={status}
+      disabled={updating}
+      onChange={(e) => onChange(e.target.value)}
       className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        "rounded-full border px-2.5 py-0.5 text-xs font-medium cursor-pointer",
+        "appearance-none pr-5 bg-no-repeat",
+        "focus:outline-none focus:ring-2 focus:ring-ring",
+        "disabled:opacity-60 disabled:cursor-wait",
         colorClass
       )}
+      style={{
+        backgroundImage: updating
+          ? "none"
+          : `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E")`,
+        backgroundPosition: "right 6px center",
+        backgroundSize: "8px",
+      }}
     >
-      {STATUS_LABELS[status] ?? status}
-    </span>
+      {ALL_STATUSES.map((s) => (
+        <option key={s} value={s} className="bg-card text-foreground">
+          {STATUS_LABELS[s] ?? s}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -172,6 +198,9 @@ export default function ApplicationsPage() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Inline status editing
+  const [statusUpdating, setStatusUpdating] = useState<Set<string>>(new Set());
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const load = useCallback(async () => {
@@ -210,6 +239,27 @@ export default function ApplicationsPage() {
   useEffect(() => {
     setPage(1);
   }, [search, statusFilter, sourceFilter, sortOption]);
+
+  async function handleStatusChange(id: string, newStatus: string) {
+    setStatusUpdating((s) => new Set(s).add(id));
+    // Optimistic update
+    setApplications((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
+    );
+    try {
+      await updateApplication(id, { status: newStatus });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Status update failed");
+      // Revert on failure
+      void load();
+    } finally {
+      setStatusUpdating((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
 
   async function handleDelete(id: string) {
     setDeleting(true);
@@ -375,8 +425,15 @@ export default function ApplicationsPage() {
                       <td className="px-4 py-3 text-muted-foreground">
                         {app.job_title}
                       </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={app.status} />
+                      <td
+                        className="px-4 py-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <StatusSelect
+                          status={app.status}
+                          updating={statusUpdating.has(app.id)}
+                          onChange={(v) => handleStatusChange(app.id, v)}
+                        />
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
                         {formatDate(app.date_applied)}

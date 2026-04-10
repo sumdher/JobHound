@@ -199,10 +199,11 @@ export default function AdminPage() {
             <tbody className="divide-y divide-border">
               {filtered.map((user) => {
                 const busy = actionLoading.has(user.id);
+                const isAdminSelf = user.email === session.user?.email;
                 return (
                   <tr
                     key={user.id}
-                    className="transition-colors hover:bg-accent/30"
+                    className={`transition-colors ${isAdminSelf ? "opacity-50" : "hover:bg-accent/30"}`}
                   >
                     {/* User */}
                     <td className="px-4 py-3">
@@ -221,9 +222,16 @@ export default function AdminPage() {
                           </div>
                         )}
                         <div>
-                          <p className="text-sm font-medium">
-                            {user.name ?? "—"}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">
+                              {user.name ?? "—"}
+                            </p>
+                            {isAdminSelf && (
+                              <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-xs font-semibold text-primary">
+                                You
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground">
                             {user.email}
                           </p>
@@ -258,48 +266,54 @@ export default function AdminPage() {
 
                     {/* Actions */}
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        {user.status !== "approved" && (
+                      {isAdminSelf ? (
+                        <p className="text-right text-xs text-muted-foreground italic">
+                          admin account
+                        </p>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
+                          {user.status !== "approved" && (
+                            <button
+                              disabled={busy}
+                              onClick={() =>
+                                handleStatusChange(user.id, "approved")
+                              }
+                              className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-50"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {user.status !== "rejected" && (
+                            <button
+                              disabled={busy}
+                              onClick={() =>
+                                handleStatusChange(user.id, "rejected")
+                              }
+                              className="rounded-md bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500 disabled:opacity-50"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          {user.status !== "pending" && (
+                            <button
+                              disabled={busy}
+                              onClick={() =>
+                                handleStatusChange(user.id, "pending")
+                              }
+                              className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                            >
+                              Revoke
+                            </button>
+                          )}
                           <button
                             disabled={busy}
-                            onClick={() =>
-                              handleStatusChange(user.id, "approved")
-                            }
-                            className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-50"
+                            onClick={() => handleDelete(user)}
+                            className="rounded-md bg-red-600/80 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
                           >
-                            Approve
+                            Delete
                           </button>
-                        )}
-                        {user.status !== "rejected" && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              handleStatusChange(user.id, "rejected")
-                            }
-                            className="rounded-md bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500 disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                        )}
-                        {user.status !== "pending" && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              handleStatusChange(user.id, "pending")
-                            }
-                            className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
-                          >
-                            Revoke
-                          </button>
-                        )}
-                        <button
-                          disabled={busy}
-                          onClick={() => handleDelete(user)}
-                          className="rounded-md bg-red-600/80 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
