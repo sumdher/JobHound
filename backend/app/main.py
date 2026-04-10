@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     )
 
     # Routers
-    from app.api import admin, auth, applications, analytics, chat, skills
+    from app.api import admin, auth, applications, analytics, chat, skills, user_settings
 
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
     app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
     app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+    app.include_router(user_settings.router, prefix="/api/user", tags=["user"])
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
