@@ -8,13 +8,14 @@
 
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function PendingPage() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
   const [statusMsg, setStatusMsg] = useState<"pending" | "approved" | "rejected">("pending");
   const [checking, setChecking] = useState(false);
+  const redirectingRef = useRef(false);
 
   // Redirect already-approved users straight to dashboard
   useEffect(() => {
@@ -39,8 +40,15 @@ export default function PendingPage() {
         const data = (await res.json()) as { status: string };
         if (data.status === "approved") {
           setStatusMsg("approved");
-          // Sign out so next sign-in gets a fresh session with approved status
-          setTimeout(() => signOut({ callbackUrl: "/login?approved=1" }), 2000);
+          if (!redirectingRef.current) {
+            redirectingRef.current = true;
+            // Refresh the JWT in-place so it picks up approved status,
+            // then go straight to dashboard — no sign-out required.
+            setTimeout(async () => {
+              await update();
+              router.replace("/dashboard");
+            }, 1500);
+          }
         } else if (data.status === "rejected") {
           setStatusMsg("rejected");
         }
@@ -65,7 +73,13 @@ export default function PendingPage() {
         const data = (await res.json()) as { status: string };
         if (data.status === "approved") {
           setStatusMsg("approved");
-          setTimeout(() => signOut({ callbackUrl: "/login?approved=1" }), 1500);
+          if (!redirectingRef.current) {
+            redirectingRef.current = true;
+            setTimeout(async () => {
+              await update();
+              router.replace("/dashboard");
+            }, 1500);
+          }
         } else if (data.status === "rejected") {
           setStatusMsg("rejected");
         }
