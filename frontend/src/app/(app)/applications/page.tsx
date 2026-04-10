@@ -420,7 +420,7 @@ export default function ApplicationsPage() {
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Link href={`/applications/${app.id}`} className="text-primary hover:underline">
-                      View
+                      Edit
                     </Link>
                     <button
                       onClick={() => setPendingDelete(app.id)}
@@ -498,7 +498,7 @@ export default function ApplicationsPage() {
                       <td className="px-4 py-3 hidden lg:table-cell"><SkillPills skills={app.skills} /></td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
-                          <Link href={`/applications/${app.id}`} className="text-primary hover:underline">View</Link>
+                          <Link href={`/applications/${app.id}`} className="text-primary hover:underline">Edit</Link>
                           <button onClick={() => setPendingDelete(app.id)} className="text-destructive hover:opacity-80">Delete</button>
                         </div>
                       </td>
