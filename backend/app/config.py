@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:11434",
         description="Ollama base URL",
     )
-    ollama_model: str = Field(default="llama3.1:8b", description="Ollama model name")
+    ollama_model: str = Field(default="gemma3:12b", description="Ollama model name")
     openai_api_key: str = Field(default="", description="OpenAI API key")
     openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model name")
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
