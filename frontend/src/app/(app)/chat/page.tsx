@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getChatHistory, clearChatHistory, streamChat } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
