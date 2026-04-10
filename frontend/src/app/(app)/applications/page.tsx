@@ -6,15 +6,18 @@
 
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   listApplications,
   deleteApplication,
   updateApplication,
+  countExportApplications,
+  exportApplications,
   type Application,
   type ApplicationFilters,
+  type ExportFilters,
 } from "@/lib/api";
 import { cn, formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
 
@@ -185,6 +188,246 @@ function DeleteConfirmInline({
   );
 }
 
+// ── Download / Export Modal ────────────────────────────────────────────────────
+
+const EXPORT_STATUSES = ALL_STATUSES;
+const EXPORT_SOURCES = ["linkedin", "indeed", "glassdoor", "company website", "referral", "recruiter", "other"];
+const EXPORT_WORK_MODES = ["remote", "hybrid", "onsite"];
+
+function CheckGroup({
+  label,
+  options,
+  selected,
+  onToggle,
+  labelFn,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  onToggle: (v: string) => void;
+  labelFn?: (v: string) => string;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+        {selected.length > 0 && (
+          <span className="ml-2 rounded-full bg-primary/20 px-1.5 py-0.5 text-primary">
+            {selected.length}
+          </span>
+        )}
+      </p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        {options.map((opt) => (
+          <label key={opt} className="flex cursor-pointer items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              checked={selected.includes(opt)}
+              onChange={() => onToggle(opt)}
+              className="h-3.5 w-3.5 rounded accent-primary"
+            />
+            <span className="capitalize text-foreground">
+              {labelFn ? labelFn(opt) : opt}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DownloadModal({ onClose }: { onClose: () => void }) {
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
+  const [workModes, setWorkModes] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [count, setCount] = useState<number | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const filters: ExportFilters = {
+    status: statuses.length ? statuses : undefined,
+    source: sources.length ? sources : undefined,
+    work_mode: workModes.length ? workModes : undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    search: search || undefined,
+  };
+
+  // Live count with 350ms debounce
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const n = await countExportApplications(filters);
+        setCount(n);
+      } catch {
+        setCount(null);
+      }
+    }, 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statuses, sources, workModes, dateFrom, dateTo, search]);
+
+  const toggle = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (v: string) =>
+    setter((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      const data = await exportApplications(filters);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `jobhound-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-16">
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/60" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-lg rounded-xl border border-border bg-card shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-base font-semibold">Export Applications</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Filters */}
+        <div className="space-y-5 px-5 py-4">
+          <p className="text-xs text-muted-foreground">
+            Leave all filters empty to export everything. Checked items are included.
+          </p>
+
+          <CheckGroup
+            label="Status"
+            options={EXPORT_STATUSES}
+            selected={statuses}
+            onToggle={toggle(setStatuses)}
+            labelFn={(s) => STATUS_LABELS[s] ?? s}
+          />
+
+          <CheckGroup
+            label="Source"
+            options={EXPORT_SOURCES}
+            selected={sources}
+            onToggle={toggle(setSources)}
+          />
+
+          <CheckGroup
+            label="Work Mode"
+            options={EXPORT_WORK_MODES}
+            selected={workModes}
+            onToggle={toggle(setWorkModes)}
+          />
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Applied After
+              </label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Applied Before
+              </label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Search (company / role)
+            </label>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="e.g. Google, engineer..."
+              className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-border px-5 py-4">
+          <p className="text-sm text-muted-foreground">
+            {count === null ? (
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                Counting…
+              </span>
+            ) : (
+              <span>
+                <span className="font-semibold text-foreground">{count}</span>
+                {" "}application{count !== 1 ? "s" : ""} will be exported
+              </span>
+            )}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDownload}
+              disabled={downloading || count === 0}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {downloading ? (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+              ) : (
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              )}
+              Download JSON
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <p className="px-5 pb-3 text-xs text-destructive">{error}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ApplicationsPage() {
@@ -204,6 +447,9 @@ export default function ApplicationsPage() {
   // Pending delete
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Export modal
+  const [showExport, setShowExport] = useState(false);
 
   // Inline status editing
   const [statusUpdating, setStatusUpdating] = useState<Set<string>>(new Set());
@@ -283,6 +529,8 @@ export default function ApplicationsPage() {
 
   return (
     <div className="space-y-6">
+      {showExport && <DownloadModal onClose={() => setShowExport(false)} />}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -291,12 +539,23 @@ export default function ApplicationsPage() {
             {total} application{total !== 1 ? "s" : ""} total
           </p>
         </div>
-        <Link
-          href="/applications/new"
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
-        >
-          + New Application
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowExport(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export
+          </button>
+          <Link
+            href="/applications/new"
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
+          >
+            + New
+          </Link>
+        </div>
       </div>
 
       {/* Search + Filters */}

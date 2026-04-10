@@ -173,6 +173,40 @@ export async function deleteApplication(id: string): Promise<void> {
   return apiFetch<void>(`/api/applications/${id}`, { method: "DELETE" });
 }
 
+export interface ExportFilters {
+  status?: string[];
+  source?: string[];
+  work_mode?: string[];
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+}
+
+function buildExportQuery(filters: ExportFilters, countOnly = false): string {
+  const p = new URLSearchParams();
+  filters.status?.forEach((s) => p.append("status", s));
+  filters.source?.forEach((s) => p.append("source", s));
+  filters.work_mode?.forEach((m) => p.append("work_mode", m));
+  if (filters.date_from) p.set("date_from", filters.date_from);
+  if (filters.date_to) p.set("date_to", filters.date_to);
+  if (filters.search) p.set("search", filters.search);
+  if (countOnly) p.set("count_only", "true");
+  return p.toString();
+}
+
+export async function countExportApplications(filters: ExportFilters): Promise<number> {
+  const qs = buildExportQuery(filters, true);
+  const res = await apiFetch<{ total: number }>(`/api/applications/export?${qs}`);
+  return res.total;
+}
+
+export async function exportApplications(
+  filters: ExportFilters
+): Promise<{ exported_at: string; total: number; applications: Application[] }> {
+  const qs = buildExportQuery(filters, false);
+  return apiFetch(`/api/applications/export?${qs}`);
+}
+
 export interface ParseResponse {
   parsed: Record<string, unknown>;
   uncertain_fields: string[];
