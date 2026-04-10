@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.application import Application, ApplicationSkill, StatusHistory
+from app.services.llm.base import LLMConfig
 from app.models.skill import Skill
 from app.models.user import User
 from app.schemas.application import (
@@ -533,9 +534,16 @@ async def parse_application_text(
     try:
         from app.services import parser as parser_service  # noqa: PLC0415
 
+        config = LLMConfig(
+            provider=body.provider,
+            model=body.model,
+            api_key=body.api_key,
+            base_url=body.base_url,
+        ) if (body.provider or body.model) else None
+
         result = await parser_service.parse_application(
             text=body.text,
-            config=None,
+            config=config,
         )
         uncertain_fields = result.pop("uncertain_fields", [])
         skills = result.pop("skills", [])
