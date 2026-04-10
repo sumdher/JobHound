@@ -9,12 +9,30 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { parseApplication, createApplication } from "@/lib/api";
 import { cn, STATUS_LABELS } from "@/lib/utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const PARSE_LOADING_PHRASES = [
+  "Reading between the lines...",
+  "Extracting the good stuff...",
+  "Talking to the model fr fr...",
+  "Manifesting structured data...",
+  "Decoding job description lore...",
+  "Vibing with your job post...",
+  "No cap, almost done...",
+  "Big brain extraction mode...",
+  "Summoning field values...",
+  "Respectfully asking the LLM...",
+  "Slay-tracting your application...",
+  "Lowkey parsing the whole thing...",
+  "Running NLP check (allegedly)...",
+  "Convinced 1 neural net so far...",
+  "Almost there, stay with me...",
+];
 
 const SOURCES = [
   "LinkedIn",
@@ -497,6 +515,27 @@ export default function NewApplicationPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Rotating loading phrase while parsing
+  const [parsePhrase, setParsePhrase] = useState("");
+  useEffect(() => {
+    if (!parsing) { setParsePhrase(""); return; }
+    const pick = () =>
+      setParsePhrase(PARSE_LOADING_PHRASES[Math.floor(Math.random() * PARSE_LOADING_PHRASES.length)]);
+    pick();
+    const id = setInterval(pick, 2500);
+    return () => clearInterval(id);
+  }, [parsing]);
+
+  function handleStartFresh() {
+    setParsed(false);
+    setRawText("");
+    setFormData(EMPTY_FORM);
+    setSkills([]);
+    setUncertainFields([]);
+    setParseError(null);
+    setSaveError(null);
+  }
+
   function updateField(field: keyof FormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   }
@@ -617,28 +656,36 @@ export default function NewApplicationPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleParse}
-                disabled={parsing || !rawText.trim()}
-                className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
-              >
-                {parsing ? (
-                  <>
-                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                    </svg>
-                    Parsing...
-                  </>
-                ) : (
-                  "Parse with AI"
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleParse}
+                  disabled={parsing || !rawText.trim()}
+                  className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {parsing ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Parsing...
+                    </>
+                  ) : (
+                    "Parse with AI"
+                  )}
+                </button>
+                {parsed && (
+                  <span className="text-sm text-green-400">
+                    Parsed successfully — review the form below
+                  </span>
                 )}
-              </button>
-              {parsed && (
-                <span className="text-sm text-green-400">
-                  Parsed successfully — review the form below
-                </span>
+              </div>
+              {parsing && parsePhrase && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <span className="italic">{parsePhrase}</span>
+                </div>
               )}
             </div>
           </div>
@@ -646,9 +693,17 @@ export default function NewApplicationPage() {
           {/* Pre-filled form after parse */}
           {parsed && (
             <div className="rounded-lg border border-border bg-card p-5">
-              <h2 className="text-sm font-semibold text-foreground mb-4">
-                Review &amp; Save
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-foreground">
+                  Review &amp; Save
+                </h2>
+                <button
+                  onClick={handleStartFresh}
+                  className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+                >
+                  Start Fresh
+                </button>
+              </div>
               <ApplicationForm
                 formData={formData}
                 skills={skills}
