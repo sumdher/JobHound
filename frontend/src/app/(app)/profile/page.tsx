@@ -267,13 +267,36 @@ export default function ProfilePage() {
           <p className="text-xs text-muted-foreground">
             {cvText.trim() ? `${cvText.trim().split(/\s+/).length} words` : "No CV saved yet"}
           </p>
-          <button
-            onClick={handleSaveCv}
-            disabled={cvSaving || !cvText.trim()}
-            className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {cvSaved ? "Saved!" : cvSaving ? "Saving…" : "Save CV"}
-          </button>
+          <div className="flex items-center gap-2">
+            {cvText.trim() && (
+              <button
+                onClick={async () => {
+                  if (!window.confirm("Clear your saved CV? This cannot be undone.")) return;
+                  setCvSaving(true);
+                  setCvError(null);
+                  try {
+                    await saveCvText("");
+                    setCvText("");
+                  } catch (e) {
+                    setCvError(e instanceof Error ? e.message : "Clear failed");
+                  } finally {
+                    setCvSaving(false);
+                  }
+                }}
+                disabled={cvSaving}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:border-destructive hover:text-destructive disabled:opacity-50 transition-colors"
+              >
+                Clear CV
+              </button>
+            )}
+            <button
+              onClick={handleSaveCv}
+              disabled={cvSaving || !cvText.trim()}
+              className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {cvSaved ? "Saved!" : cvSaving ? "Saving…" : "Save CV"}
+            </button>
+          </div>
         </div>
       </div>
 

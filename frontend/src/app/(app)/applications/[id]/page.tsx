@@ -824,8 +824,8 @@ export default function ApplicationDetailPage() {
         </SectionCard>
       )}
 
-      {/* Rejection Reason */}
-      {(app.status === "rejected" || editing) && (
+      {/* Rejection Reason — only when status is/will be "rejected" */}
+      {(editing ? es?.status : app.status) === "rejected" && (
         <SectionCard title="Rejection Reason">
           {editing && es ? (
             <textarea

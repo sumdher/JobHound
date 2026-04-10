@@ -75,14 +75,25 @@ async def upload_cv_pdf(
 
     try:
         import io
-        import pdfplumber  # noqa: PLC0415
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            pages_text = []
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
+        extracted = ""
+        pages_text: list[str] = []
+        try:
+            import pdfplumber  # noqa: PLC0415
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        pages_text.append(text.strip())
+            extracted = "\n\n".join(pages_text).strip()
+        except ImportError:
+            # Fallback: pypdf (ships with many Python environments)
+            import pypdf  # noqa: PLC0415
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                if text.strip():
                     pages_text.append(text.strip())
-        extracted = "\n\n".join(pages_text).strip()
+            extracted = "\n\n".join(pages_text).strip()
     except Exception as e:
         logger.error("PDF extraction failed", error=str(e))
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Could not extract text from PDF: {e}") from e
