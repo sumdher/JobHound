@@ -181,11 +181,27 @@ export interface ParseResponse {
 
 export async function parseApplication(text: string, signal?: AbortSignal): Promise<ParseResponse> {
   const llmConfig = getLLMConfig();
-  return apiFetch<ParseResponse>("/api/applications/parse", {
+  const authHeaders = await getAuthHeaders();
+
+  // Use the Next.js route handler (/api/parse) instead of the rewrite proxy
+  // (/backend/api/applications/parse) — same reason as /api/chat: rewrites
+  // buffer the full response before forwarding, causing Cloudflare 524 timeouts.
+  const res = await fetch("/api/parse", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ text, ...llmConfig }),
     signal,
   });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error((error as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+
+  return res.json() as Promise<ParseResponse>;
 }
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
