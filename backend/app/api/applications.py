@@ -534,11 +534,13 @@ async def parse_application_text(
     try:
         from app.services import parser as parser_service  # noqa: PLC0415
 
+        # For Ollama, always use the server-side OLLAMA_URL (host.docker.internal).
+        # The frontend stores localhost:11434 which is unreachable inside Docker.
         config = LLMConfig(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url,
+            base_url=body.base_url if body.provider != "ollama" else None,
         ) if (body.provider or body.model) else None
 
         result = await parser_service.parse_application(

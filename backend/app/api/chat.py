@@ -57,7 +57,9 @@ async def chat(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url,
+            # For Ollama, ignore frontend base_url (localhost:11434 is unreachable
+            # from inside Docker). Backend always uses OLLAMA_URL env var instead.
+            base_url=body.base_url if body.provider != "ollama" else None,
         )
 
     async def event_generator():
