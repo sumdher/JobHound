@@ -179,11 +179,12 @@ export interface ParseResponse {
   skills: string[];
 }
 
-export async function parseApplication(text: string): Promise<ParseResponse> {
+export async function parseApplication(text: string, signal?: AbortSignal): Promise<ParseResponse> {
   const llmConfig = getLLMConfig();
   return apiFetch<ParseResponse>("/api/applications/parse", {
     method: "POST",
     body: JSON.stringify({ text, ...llmConfig }),
+    signal,
   });
 }
 
@@ -285,27 +286,36 @@ export async function clearChatHistory(): Promise<void> {
   return apiFetch<void>("/api/chat/history", { method: "DELETE" });
 }
 
-/** Stream chat response as SSE. Returns an EventSource-like async iterator. */
+/** Stream chat response as SSE. Pass an AbortSignal to support mid-stream cancellation. */
 export async function streamChat(
   message: string,
   onToken: (token: string) => void,
   onDone: () => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   const llmConfig = getLLMConfig();
 
-  // Use the Next.js route handler (/api/chat) instead of the rewrite proxy
-  // (/backend/api/chat) — the route handler pipes SSE in real-time, while
-  // rewrites buffer the entire response before forwarding (Cloudflare 524).
-  const res = await fetch(`/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders,
-    },
-    body: JSON.stringify({ message, ...llmConfig }),
-  });
+  let res: Response;
+  try {
+    // Use the Next.js route handler (/api/chat) instead of the rewrite proxy
+    // (/backend/api/chat) — the route handler pipes SSE in real-time, while
+    // rewrites buffer the entire response before forwarding (Cloudflare 524).
+    res = await fetch(`/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
+      body: JSON.stringify({ message, ...llmConfig }),
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    onError(e instanceof Error ? e.message : "Request failed");
+    return;
+  }
 
   if (!res.ok || !res.body) {
     onError(`HTTP ${res.status}`);
@@ -316,33 +326,38 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") {
-          onDone();
-          return;
-        }
-        try {
-          const parsed = JSON.parse(data) as { token?: string; error?: string };
-          if (parsed.error) {
-            onError(parsed.error);
-          } else if (parsed.token) {
-            onToken(parsed.token);
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") {
+            onDone();
+            return;
           }
-        } catch {
-          // ignore parse errors
+          try {
+            const parsed = JSON.parse(data) as { token?: string; error?: string };
+            if (parsed.error) {
+              onError(parsed.error);
+            } else if (parsed.token) {
+              onToken(parsed.token);
+            }
+          } catch {
+            // ignore parse errors
+          }
         }
       }
     }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }
+    throw e;
   }
 
   onDone();

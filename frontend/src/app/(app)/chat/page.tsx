@@ -26,20 +26,61 @@ const SUGGESTIONS = [
 
 const LOADING_PHRASES = [
   "Consulting the oracle fr fr...",
-  "Vibing with your data rn...",
   "Manifesting an answer...",
   "Doing the math (allegedly)...",
   "Touching grass (digitally)...",
   "Big brain moment loading...",
   "Running vibes check...",
   "Decoding your job hunt arc...",
-  "Summoning the algorithm overlords...",
+  "Summoning the thinking hat overlords...",
   "No cap, thinking hard...",
   "Respectfully asking the model...",
   "Slay-mining your applications...",
-  "Checking LinkedIn (ironically)...",
   "Convinced 1 neural net so far...",
-  "Lowkey going through your apps...",
+  "Lowkey going through the data...",
+  // Viking-style
+  "Reading the runes...",
+  "Charting a course through your data...",
+  "Testing the winds before we sail...",
+  "A brief raid on the problem space...",
+  "Forging a cleaner signal...",
+  "Letting the dust settle before the verdict...",
+  "Scanning the horizon for answers...",
+  "Following the northern star of logic...",
+  "Sounding the depths of your data...",
+  "Plotting a steady course...",
+  "Reading the tide before deciding...",
+  "Keeping the longship on course...",
+  "Mapping unknown waters...",
+  "Testing the strength of this idea...",
+  "Tracing the fault lines...",
+  "Measuring twice, sailing once...",
+  "Letting the fog clear...",
+  "Anchoring on first principles...",
+  "Watching the currents shift...",
+  "Taking bearings from the signal...",
+  "Crossing open water—stand by...",
+  "Quietly sharpening the edge...",
+  "Waiting for the right wind...",
+  "Marking a clean path forward...",
+  "Holding steady through noise...",
+  "Finding a truer north...",
+  // Smart / punny
+  "Applying some Bayesian optimism...",
+  "Minimizing regret (and loss functions)...",
+  "Gradient descending into clarity...",
+  "Reducing uncertainty, one bit at a time...",
+  "Searching for a local maximum of insight...",
+  "Compiling thoughts, no warnings so far...",
+  "Cache miss—thinking from first principles...",
+  "Running a quick sanity check...",
+  "Normalizing expectations...",
+  "Adding a touch of regularization...",
+  "Converging… slowly but surely...",
+  "Estimating, then overestimating confidence...",
+  "Turning data into opinions...",
+  "Proof by computation in progress...",
+  "Finding signal in polite noise...",
 ];
 
 // ── Markdown renderer (no extra packages) ────────────────────────────────────
@@ -154,6 +195,7 @@ export default function ChatPage() {
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const loadHistory = async () => {
@@ -202,6 +244,9 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setStreaming(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       await streamChat(
         msg,
@@ -241,12 +286,27 @@ export default function ChatPage() {
             }
             return updated;
           });
-        }
+        },
+        controller.signal,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Stream failed");
       setStreaming(false);
     }
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    setMessages((prev) => {
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (last?.streaming) {
+        updated[updated.length - 1] = { ...last, streaming: false };
+      }
+      return updated;
+    });
   };
 
   const handleClear = async () => {
@@ -381,17 +441,26 @@ export default function ChatPage() {
           rows={2}
           className="flex-1 resize-none rounded-lg border border-border bg-input px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
         />
-        <button
-          onClick={() => handleSend()}
-          disabled={!input.trim() || streaming}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-        >
-          {streaming ? (
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent block" />
-          ) : (
-            "Send"
-          )}
-        </button>
+        {streaming ? (
+          <button
+            onClick={handleStop}
+            title="Stop generation"
+            className="rounded-lg bg-secondary px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors flex items-center gap-1.5"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="1" />
+            </svg>
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={() => handleSend()}
+            disabled={!input.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );
