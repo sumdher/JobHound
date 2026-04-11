@@ -74,14 +74,17 @@ async def google_auth(
             detail="Google token missing email claim",
         )
 
+    configured_admin = (settings.admin_email or "").strip().lower()
+    normalized_email = email.strip().lower()
+
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     is_new_user = user is None
 
     if is_new_user:
         # Auto-approve if no admin is configured (dev mode) or if this IS the admin
-        is_admin = settings.admin_email and email.lower() == settings.admin_email.lower()
-        initial_status = "approved" if (is_admin or not settings.admin_email) else "pending"
+        is_admin = bool(configured_admin and normalized_email == configured_admin)
+        initial_status = "approved" if (is_admin or not configured_admin) else "pending"
 
         user = User(
             email=email,
@@ -114,7 +117,7 @@ async def google_auth(
 
     token = create_access_token(user.id, user.email)
 
-    is_admin = bool(settings.admin_email and email.lower() == settings.admin_email.lower())
+    is_admin = bool(configured_admin and normalized_email == configured_admin)
 
     return AuthResponse(
         access_token=token,
@@ -156,4 +159,10 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
 )
 async def get_status(current_user: User = Depends(get_any_user)) -> dict:
     """Return the user's current approval status (usable by pending users)."""
-    return {"status": current_user.status}
+    configured_admin = (settings.admin_email or "").strip().lower()
+    current_email = (current_user.email or "").strip().lower()
+
+    return {
+        "status": current_user.status,
+        "is_admin": current_email == configured_admin if configured_admin else False,
+    }

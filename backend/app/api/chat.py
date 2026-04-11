@@ -99,6 +99,15 @@ class ChatRequest(BaseModel):
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
+    history: list["HistoryMessageIn"] | None = None
+    persist_user_message: bool = True
+    user_message_metadata: dict | None = None
+    assistant_message_metadata: dict | None = None
+
+
+class HistoryMessageIn(BaseModel):
+    role: str
+    content: str
 
 
 class SessionOut(BaseModel):
@@ -116,6 +125,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     created_at: str
+    metadata: dict | None = None
 
 
 class RenameRequest(BaseModel):
@@ -234,6 +244,7 @@ async def get_session_history(
             role=m.role,
             content=m.content,
             created_at=m.created_at.isoformat(),
+            metadata=m.metadata_,
         )
         for m in messages
     ]
@@ -276,7 +287,11 @@ async def summarize_session(
     )
     history = result.scalars().all()
 
-    conversation = "\n".join(f"{m.role.upper()}: {m.content}" for m in history)
+    if body.history:
+        conversation = "\n".join(f"{m.role.upper()}: {m.content}" for m in body.history)
+    else:
+        conversation = "\n".join(f"{m.role.upper()}: {m.content}" for m in history)
+
     messages: list[Message] = [
         Message(
             role="system",
@@ -412,6 +427,12 @@ async def chat(
                     db=db,
                     config=config,
                     session_id=session_id,
+                    history_override=[
+                        Message(role=msg.role, content=msg.content) for msg in body.history or []
+                    ] or None,
+                    persist_user_message=body.persist_user_message,
+                    user_message_metadata=body.user_message_metadata,
+                    assistant_message_metadata=body.assistant_message_metadata,
                 ):
                     await queue.put(("token", token))
             except Exception as e:

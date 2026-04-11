@@ -343,6 +343,31 @@ export interface ChatSession {
   message_count: number;
 }
 
+export interface ChatMessageHistoryItem {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+  metadata?: {
+    client_id?: string;
+    parent_client_id?: string | null;
+  } | null;
+}
+
+export interface ChatHistoryMessageInput {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface StreamChatOptions {
+  sessionId?: string;
+  signal?: AbortSignal;
+  history?: ChatHistoryMessageInput[];
+  persistUserMessage?: boolean;
+  userMessageMetadata?: Record<string, unknown>;
+  assistantMessageMetadata?: Record<string, unknown>;
+}
+
 export async function listChatSessions(): Promise<ChatSession[]> {
   return apiFetch<ChatSession[]>("/api/chat/sessions");
 }
@@ -362,7 +387,7 @@ export async function deleteChatSession(id: string): Promise<void> {
   return apiFetch<void>(`/api/chat/sessions/${id}`, { method: "DELETE" });
 }
 
-export async function getChatSessionHistory(id: string): Promise<{ id: number; role: string; content: string; created_at: string }[]> {
+export async function getChatSessionHistory(id: string): Promise<ChatMessageHistoryItem[]> {
   return apiFetch(`/api/chat/sessions/${id}/history`);
 }
 
@@ -507,8 +532,7 @@ export async function streamChat(
   onDone: () => void,
   onMeta: ((meta: { session_id: string; token_count: number }) => void) | undefined,
   onError: (error: string) => void,
-  sessionId?: string,
-  signal?: AbortSignal,
+  options: StreamChatOptions = {},
 ): Promise<void> {
   const authHeaders = await getAuthHeaders();
   const llmConfig = getLLMConfig();
@@ -524,8 +548,16 @@ export async function streamChat(
         "Content-Type": "application/json",
         ...authHeaders,
       },
-      body: JSON.stringify({ message, ...llmConfig, ...(sessionId ? { session_id: sessionId } : {}) }),
-      signal,
+      body: JSON.stringify({
+        message,
+        ...llmConfig,
+        ...(options.sessionId ? { session_id: options.sessionId } : {}),
+        ...(options.history ? { history: options.history } : {}),
+        ...(options.persistUserMessage === false ? { persist_user_message: false } : {}),
+        ...(options.userMessageMetadata ? { user_message_metadata: options.userMessageMetadata } : {}),
+        ...(options.assistantMessageMetadata ? { assistant_message_metadata: options.assistantMessageMetadata } : {}),
+      }),
+      signal: options.signal,
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") { onDone(); return; }

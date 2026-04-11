@@ -8,8 +8,8 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { Sidebar } from "@/components/sidebar";
 import {
@@ -30,13 +30,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const SIDEBAR_WIDTH_KEY = "jobhound_sidebar_width";
   const MIN_SIDEBAR_WIDTH = 240;
   const MAX_SIDEBAR_WIDTH = 420;
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
+  const hasRefreshedSession = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(288);
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [analyses, setAnalyses] = useState<CvAnalysis[]>([]);
+  const isChatRoute = pathname === "/chat";
 
   const upsertSession = useCallback((session: ChatSession) => {
     setSessions((prev) => {
@@ -70,6 +73,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace("/pending");
     }
   }, [status, session, router]);
+
+  useEffect(() => {
+    if (status !== "authenticated" || hasRefreshedSession.current) return;
+
+    hasRefreshedSession.current = true;
+    void update();
+  }, [status, update]);
 
   // Load sidebar data once authenticated
   useEffect(() => {
@@ -151,7 +161,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!session || session.userStatus !== "approved") return null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-dvh overflow-hidden bg-background">
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -165,7 +175,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         onResizeStart={handleSidebarResizeStart}
       />
 
-      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mobile top bar — hidden on lg+ where sidebar is always visible */}
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 lg:hidden">
           <button
@@ -181,8 +191,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <span className="text-base font-bold tracking-tight">JobHound</span>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-4 md:p-6">{children}</div>
+        <main className={isChatRoute ? "flex-1 min-h-0 overflow-hidden" : "flex-1 overflow-y-auto"}>
+          <div className={isChatRoute ? "h-full min-h-0" : "p-4 md:p-6"}>{children}</div>
         </main>
       </div>
     </div>

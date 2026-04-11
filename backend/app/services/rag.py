@@ -68,6 +68,10 @@ async def stream_chat(
     db: AsyncSession,
     config: LLMConfig | None = None,
     session_id: uuid.UUID | None = None,
+    history_override: list[Message] | None = None,
+    persist_user_message: bool = True,
+    user_message_metadata: dict | None = None,
+    assistant_message_metadata: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Full RAG pipeline: embed query → vector search → SQL search → LLM stream.
@@ -149,41 +153,52 @@ async def stream_chat(
     # 4. Build context
     context = _build_context(app_rows, chunk_rows)
 
-    # 5. Load recent chat history (last 10 messages), filtered by session if provided
-    history_query = (
-        select(ChatMessage)
-        .where(ChatMessage.user_id == user_id)
-        .order_by(ChatMessage.created_at.desc())
-        .limit(10)
-    )
-    if session_id is not None:
+    history: list[ChatMessage] = []
+    if history_override is None:
         history_query = (
             select(ChatMessage)
-            .where(
-                ChatMessage.user_id == user_id,
-                ChatMessage.session_id == session_id,
-            )
+            .where(ChatMessage.user_id == user_id)
             .order_by(ChatMessage.created_at.desc())
             .limit(10)
         )
-    history_result = await db.execute(history_query)
-    history = list(reversed(history_result.scalars().all()))
+        if session_id is not None:
+            history_query = (
+                select(ChatMessage)
+                .where(
+                    ChatMessage.user_id == user_id,
+                    ChatMessage.session_id == session_id,
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+            )
+        history_result = await db.execute(history_query)
+        history = list(reversed(history_result.scalars().all()))
 
     # 6. Build message list
     system_prompt = (PROMPTS_DIR / "rag_system.txt").read_text().replace("{context}", context)
     messages: list[Message] = [Message(role="system", content=system_prompt)]
 
-    for hist_msg in history:
-        messages.append(Message(role=hist_msg.role, content=hist_msg.content))
+    if history_override is not None:
+        messages.extend(history_override)
+    else:
+        for hist_msg in history:
+            messages.append(Message(role=hist_msg.role, content=hist_msg.content))
 
     messages.append(Message(role="user", content=message))
 
     # 7. Save user message BEFORE streaming so it always gets an earlier
     #    created_at than the assistant message (same-tx timestamps cause
     #    non-deterministic ordering in history queries).
-    user_msg = ChatMessage(user_id=user_id, role="user", content=message, session_id=session_id)
-    db.add(user_msg)
-    await db.commit()
+    if persist_user_message:
+        user_msg = ChatMessage(
+            user_id=user_id,
+            role="user",
+            content=message,
+            session_id=session_id,
+            metadata_=user_message_metadata,
+        )
+        db.add(user_msg)
+        await db.commit()
 
     # 8. Stream from LLM
     provider = get_llm_provider(config)
@@ -200,6 +215,7 @@ async def stream_chat(
         role="assistant",
         content=full_response_text,
         session_id=session_id,
+        metadata_=assistant_message_metadata,
     )
     db.add(assistant_msg)
     await db.commit()
@@ -211,5 +227,9 @@ async def stream_chat(
         )
         session = session_result.scalar_one_or_none()
         if session is not None:
-            session.token_count += _estimate_tokens(message + full_response_text)
+            active_history = history_override or [
+                Message(role=hist_msg.role, content=hist_msg.content) for hist_msg in history
+            ]
+            session.token_count = sum(_estimate_tokens(msg.content) for msg in active_history)
+            session.token_count += _estimate_tokens(message) + _estimate_tokens(full_response_text)
             await db.commit()
