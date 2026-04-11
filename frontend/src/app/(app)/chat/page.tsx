@@ -15,8 +15,14 @@ import {
   getChatSessionHistory,
   streamChat,
   streamSummarize,
+  estimateTokens,
   type ChatSession,
 } from "@/lib/api";
+import {
+  CHAT_DRAFT_UPDATED_EVENT,
+  CHAT_SESSIONS_CHANGED_EVENT,
+  emitAppEvent,
+} from "@/lib/app-events";
 import { cn } from "@/lib/utils";
 
 interface Message {
@@ -24,6 +30,18 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+}
+
+interface ChatDraft {
+  sessionId: string;
+  currentSession: ChatSession | null;
+  messages: Message[];
+  input: string;
+  streaming: boolean;
+  summarizing: boolean;
+  tokenCount: number;
+  maxTokens: number;
+  error: string;
 }
 
 const SUGGESTIONS = [
@@ -109,6 +127,28 @@ function getContextWindowTokens(): number {
   }
 }
 
+function getLiveContextTokenCount(
+  persistedTokenCount: number,
+  draftInput: string,
+  messages: Message[],
+  streaming: boolean,
+): number {
+  const draftTokens = estimateTokens(draftInput);
+  if (!streaming) return persistedTokenCount + draftTokens;
+
+  const assistantMessage = [...messages].reverse().find((msg) => msg.role === "assistant");
+  const userMessage = [...messages]
+    .reverse()
+    .find((msg, index, arr) => msg.role === "user" && arr.slice(0, index).some((m) => m.role === "assistant"));
+  const pendingTokens = estimateTokens(userMessage?.content ?? "") + estimateTokens(assistantMessage?.content ?? "");
+
+  return persistedTokenCount + pendingTokens;
+}
+
+function getChatDraftStorageKey(sessionId: string): string {
+  return `jobhound_chat_draft_${sessionId}`;
+}
+
 // ── Markdown renderer ──────────────────────────────────────────────────────────
 
 function inlineMarkdown(text: string): React.ReactNode[] {
@@ -126,6 +166,27 @@ function inlineMarkdown(text: string): React.ReactNode[] {
       return <em key={i}>{part.slice(1, -1)}</em>;
     return part;
   });
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isTableDivider(line: string): boolean {
+  const cells = parseTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function tableAlign(cell: string): "left" | "center" | "right" {
+  const trimmed = cell.trim();
+  if (trimmed.startsWith(":") && trimmed.endsWith(":")) return "center";
+  if (trimmed.endsWith(":")) return "right";
+  return "left";
 }
 
 function Markdown({ content }: { content: string }) {
@@ -163,11 +224,62 @@ function Markdown({ content }: { content: string }) {
       );
       i++;
       continue;
+    } else if (line.includes("|") && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      flushList();
+      const header = parseTableRow(line);
+      const alignments = parseTableRow(lines[i + 1]).map(tableAlign);
+      const body: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        body.push(parseTableRow(lines[i]));
+        i++;
+      }
+      nodes.push(
+        <div key={`table-${i}`} className="my-3 overflow-x-auto rounded-lg border border-border/50">
+          <table className="min-w-full border-collapse text-sm">
+            <thead className="bg-black/10">
+              <tr>
+                {header.map((cell, index) => (
+                  <th
+                    key={`th-${index}`}
+                    className="border-b border-border/50 px-3 py-2 font-semibold"
+                    style={{ textAlign: alignments[index] ?? "left" }}
+                  >
+                    {inlineMarkdown(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {body.map((row, rowIndex) => (
+                <tr key={`tr-${rowIndex}`} className="odd:bg-black/5">
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={`td-${rowIndex}-${cellIndex}`}
+                      className="border-t border-border/40 px-3 py-2 align-top"
+                      style={{ textAlign: alignments[cellIndex] ?? "left" }}
+                    >
+                      {inlineMarkdown(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
     }
 
     if (line.startsWith("### ")) {
       flushList();
       nodes.push(<p key={i} className="mt-3 mb-0.5 font-semibold">{inlineMarkdown(line.slice(4))}</p>);
+    } else if (line.startsWith("#### ")) {
+      flushList();
+      nodes.push(<p key={i} className="mt-3 mb-0.5 text-sm font-semibold">{inlineMarkdown(line.slice(5))}</p>);
+    } else if (line.startsWith("##### ")) {
+      flushList();
+      nodes.push(<p key={i} className="mt-3 mb-0.5 text-sm font-medium">{inlineMarkdown(line.slice(6))}</p>);
     } else if (line.startsWith("## ")) {
       flushList();
       nodes.push(<p key={i} className="mt-3 mb-1 text-base font-bold">{inlineMarkdown(line.slice(3))}</p>);
@@ -269,6 +381,59 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string | null>(sessionId);
+  const currentSessionRef = useRef<ChatSession | null>(currentSession);
+  const messagesRef = useRef<Message[]>(messages);
+  const inputRefState = useRef(input);
+  const streamingRef = useRef(streaming);
+  const summarizingRef = useRef(summarizing);
+  const tokenCountRef = useRef(tokenCount);
+  const maxTokensRef = useRef(maxTokens);
+  const errorRef = useRef(error);
+  const isEmptySession = currentSession?.message_count === 0;
+  const liveTokenCount = getLiveContextTokenCount(tokenCount, input, messages, streaming);
+
+  const persistDraft = useCallback((draft: ChatDraft) => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(getChatDraftStorageKey(draft.sessionId), JSON.stringify(draft));
+    emitAppEvent(CHAT_DRAFT_UPDATED_EVENT, draft);
+  }, []);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    inputRefState.current = input;
+  }, [input]);
+
+  useEffect(() => {
+    streamingRef.current = streaming;
+  }, [streaming]);
+
+  useEffect(() => {
+    summarizingRef.current = summarizing;
+  }, [summarizing]);
+
+  useEffect(() => {
+    tokenCountRef.current = tokenCount;
+  }, [tokenCount]);
+
+  useEffect(() => {
+    maxTokensRef.current = maxTokens;
+  }, [maxTokens]);
+
+  useEffect(() => {
+    errorRef.current = error;
+  }, [error]);
 
   // Auto-grow textarea
   const adjustHeight = useCallback(() => {
@@ -284,6 +449,36 @@ export default function ChatPage() {
 
     const init = async () => {
       if (sessionIdParam) {
+        let draft: ChatDraft | null = null;
+        if (typeof window !== "undefined") {
+          const raw = window.sessionStorage.getItem(getChatDraftStorageKey(sessionIdParam));
+          if (raw) {
+            try {
+              draft = JSON.parse(raw) as ChatDraft;
+              sessionIdRef.current = draft.sessionId;
+              currentSessionRef.current = draft.currentSession;
+              messagesRef.current = draft.messages;
+              inputRefState.current = draft.input;
+              streamingRef.current = draft.streaming;
+              summarizingRef.current = draft.summarizing;
+              tokenCountRef.current = draft.tokenCount;
+              maxTokensRef.current = draft.maxTokens;
+              errorRef.current = draft.error;
+              setCurrentSession(draft.currentSession);
+              setSessionId(draft.sessionId);
+              setMessages(draft.messages);
+              setInput(draft.input);
+              setStreaming(draft.streaming);
+              setSummarizing(draft.summarizing);
+              setTokenCount(draft.tokenCount);
+              setMaxTokens(draft.maxTokens);
+              setError(draft.error);
+            } catch {
+              window.sessionStorage.removeItem(getChatDraftStorageKey(sessionIdParam));
+            }
+          }
+        }
+
         // Load history for the given session
         setLoading(true);
         try {
@@ -294,6 +489,8 @@ export default function ChatPage() {
           if (cancelled) return;
 
           const sess = sessions.find((s) => s.id === sessionIdParam) ?? null;
+          sessionIdRef.current = sessionIdParam;
+          currentSessionRef.current = sess;
           setCurrentSession(sess);
           setSessionId(sessionIdParam);
 
@@ -301,13 +498,25 @@ export default function ChatPage() {
           setMaxTokens(sess?.max_tokens ?? ctxTokens);
           setTokenCount(sess?.token_count ?? 0);
 
-          setMessages(
-            history.map((m) => ({
+          if (!draft?.streaming && !draft?.summarizing) {
+            setMessages(
+              history.map((m) => ({
+                id: m.id,
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              }))
+            );
+            messagesRef.current = history.map((m) => ({
               id: m.id,
               role: m.role as "user" | "assistant",
               content: m.content,
-            }))
-          );
+            }));
+            setInput(draft?.input ?? "");
+            setError("");
+          } else {
+            setCurrentSession((prev) => sess ?? prev);
+            setTokenCount((prev) => Math.max(prev, sess?.token_count ?? 0));
+          }
         } catch {
           // non-critical, just show empty state
         } finally {
@@ -336,6 +545,35 @@ export default function ChatPage() {
   }, [sessionIdParam]);
 
   useEffect(() => {
+    const handleDraftUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<ChatDraft | { sessionId: string; cleared: true }>;
+      if (!sessionIdParam || !customEvent.detail || customEvent.detail.sessionId !== sessionIdParam) return;
+      if ("cleared" in customEvent.detail) return;
+      const draft = customEvent.detail;
+      sessionIdRef.current = draft.sessionId;
+      currentSessionRef.current = draft.currentSession;
+      messagesRef.current = draft.messages;
+      inputRefState.current = draft.input;
+      streamingRef.current = draft.streaming;
+      summarizingRef.current = draft.summarizing;
+      tokenCountRef.current = draft.tokenCount;
+      maxTokensRef.current = draft.maxTokens;
+      errorRef.current = draft.error;
+      setCurrentSession(draft.currentSession);
+      setSessionId(draft.sessionId);
+      setMessages(draft.messages);
+      setInput(draft.input);
+      setStreaming(draft.streaming);
+      setSummarizing(draft.summarizing);
+      setTokenCount(draft.tokenCount);
+      setMaxTokens(draft.maxTokens);
+      setError(draft.error);
+    };
+    window.addEventListener(CHAT_DRAFT_UPDATED_EVENT, handleDraftUpdated);
+    return () => window.removeEventListener(CHAT_DRAFT_UPDATED_EVENT, handleDraftUpdated);
+  }, [sessionIdParam]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -355,13 +593,29 @@ export default function ChatPage() {
 
     setInput("");
     setError("");
+    errorRef.current = "";
     if (inputRef.current) inputRef.current.style.height = "auto";
 
     const userMessage: Message = { role: "user", content: msg };
     const assistantMessage: Message = { role: "assistant", content: "", streaming: true };
+    const nextMessages = [...messagesRef.current, userMessage, assistantMessage];
 
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    inputRefState.current = "";
+    messagesRef.current = nextMessages;
+    streamingRef.current = true;
+    setMessages(nextMessages);
     setStreaming(true);
+    persistDraft({
+      sessionId,
+      currentSession: currentSessionRef.current,
+      messages: nextMessages,
+      input: "",
+      streaming: true,
+      summarizing: false,
+      tokenCount: tokenCountRef.current,
+      maxTokens: maxTokensRef.current,
+      error: "",
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -370,71 +624,153 @@ export default function ChatPage() {
       await streamChat(
         msg,
         (token) => {
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.streaming) {
-              updated[updated.length - 1] = { ...last, content: last.content + token };
-            }
-            return updated;
+          const updated = [...messagesRef.current];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            updated[updated.length - 1] = { ...last, content: last.content + token };
+          }
+          messagesRef.current = updated;
+          persistDraft({
+            sessionId,
+            currentSession: currentSessionRef.current,
+            messages: updated,
+            input: inputRefState.current,
+            streaming: true,
+            summarizing: false,
+            tokenCount: tokenCountRef.current,
+            maxTokens: maxTokensRef.current,
+            error: "",
           });
+          setMessages(updated);
         },
         () => {
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.streaming) {
-              updated[updated.length - 1] = { ...last, streaming: false };
-            }
-            return updated;
+          const updated = [...messagesRef.current];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            updated[updated.length - 1] = { ...last, streaming: false };
+          }
+          messagesRef.current = updated;
+          streamingRef.current = false;
+          persistDraft({
+            sessionId,
+            currentSession: currentSessionRef.current,
+            messages: updated,
+            input: inputRefState.current,
+            streaming: false,
+            summarizing: false,
+            tokenCount: tokenCountRef.current,
+            maxTokens: maxTokensRef.current,
+            error: "",
           });
+          setMessages(updated);
           setStreaming(false);
         },
-        (meta) => {
+        async (meta) => {
+          tokenCountRef.current = meta.token_count;
           setTokenCount(meta.token_count);
+          try {
+            const sessions = await listChatSessions();
+            const sess = sessions.find((s) => s.id === meta.session_id) ?? null;
+            currentSessionRef.current = sess;
+            setCurrentSession(sess);
+            emitAppEvent(CHAT_SESSIONS_CHANGED_EVENT);
+            persistDraft({
+              sessionId,
+              currentSession: sess,
+              messages: messagesRef.current,
+              input: inputRefState.current,
+              streaming: false,
+              summarizing: false,
+              tokenCount: meta.token_count,
+              maxTokens: sess?.max_tokens ?? maxTokensRef.current,
+              error: "",
+            });
+          } catch {
+            // non-critical
+          }
         },
         (err) => {
+          errorRef.current = err;
+          streamingRef.current = false;
           setError(err);
           setStreaming(false);
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.streaming) {
-              updated[updated.length - 1] = {
-                ...last,
-                content: "Sorry, something went wrong. Please try again.",
-                streaming: false,
-              };
-            }
-            return updated;
+          const updated = [...messagesRef.current];
+          const last = updated[updated.length - 1];
+          if (last?.streaming) {
+            updated[updated.length - 1] = {
+              ...last,
+              content: "Sorry, something went wrong. Please try again.",
+              streaming: false,
+            };
+          }
+          messagesRef.current = updated;
+          persistDraft({
+            sessionId,
+            currentSession: currentSessionRef.current,
+            messages: updated,
+            input: inputRefState.current,
+            streaming: false,
+            summarizing: false,
+            tokenCount: tokenCountRef.current,
+            maxTokens: maxTokensRef.current,
+            error: err,
           });
+          setMessages(updated);
         },
         sessionId,
         controller.signal,
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Stream failed");
+      const message = e instanceof Error ? e.message : "Stream failed";
+      errorRef.current = message;
+      streamingRef.current = false;
+      setError(message);
       setStreaming(false);
+      persistDraft({
+        sessionId,
+        currentSession: currentSessionRef.current,
+        messages: messagesRef.current,
+        input: inputRefState.current,
+        streaming: false,
+        summarizing: false,
+        tokenCount: tokenCountRef.current,
+        maxTokens: maxTokensRef.current,
+        error: message,
+      });
     }
   };
 
   const handleStop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+    streamingRef.current = false;
     setStreaming(false);
-    setMessages((prev) => {
-      const updated = [...prev];
-      const last = updated[updated.length - 1];
-      if (last?.streaming) {
-        updated[updated.length - 1] = { ...last, streaming: false };
-      }
-      return updated;
-    });
+    const updated = [...messagesRef.current];
+    const last = updated[updated.length - 1];
+    if (last?.streaming) {
+      updated[updated.length - 1] = { ...last, streaming: false };
+    }
+    messagesRef.current = updated;
+    setMessages(updated);
+    if (sessionId) {
+      persistDraft({
+        sessionId,
+        currentSession: currentSessionRef.current,
+        messages: updated,
+        input: inputRefState.current,
+        streaming: false,
+        summarizing: false,
+        tokenCount: tokenCountRef.current,
+        maxTokens: maxTokensRef.current,
+        error: errorRef.current,
+      });
+    }
   };
 
   const handleNewChat = async () => {
     try {
       const newSession = await createChatSession();
+      emitAppEvent(CHAT_SESSIONS_CHANGED_EVENT);
       router.push(`/chat?s=${newSession.id}`);
     } catch {
       setError("Failed to create new session");
@@ -445,10 +781,26 @@ export default function ChatPage() {
     if (!sessionId || summarizing || streaming) return;
     setSummarizing(true);
     setError("");
+    summarizingRef.current = true;
+    errorRef.current = "";
 
     // Add placeholder summarizing message
     const placeholderMsg: Message = { role: "assistant", content: "", streaming: true };
-    setMessages((prev) => [...prev, placeholderMsg]);
+    const updatedWithPlaceholder = [...messagesRef.current, placeholderMsg];
+    messagesRef.current = updatedWithPlaceholder;
+    summarizingRef.current = true;
+    setMessages(updatedWithPlaceholder);
+    persistDraft({
+      sessionId,
+      currentSession: currentSessionRef.current,
+      messages: updatedWithPlaceholder,
+      input: inputRefState.current,
+      streaming: false,
+      summarizing: true,
+      tokenCount: tokenCountRef.current,
+      maxTokens: maxTokensRef.current,
+      error: "",
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -468,34 +820,83 @@ export default function ChatPage() {
             ]);
             const sess = sessions.find((s) => s.id === sessionId) ?? null;
             if (sess) {
+              tokenCountRef.current = sess.token_count;
+              maxTokensRef.current = sess.max_tokens;
+              currentSessionRef.current = sess;
               setTokenCount(sess.token_count);
               setMaxTokens(sess.max_tokens);
               setCurrentSession(sess);
             }
-            setMessages(
-              history.map((m) => ({
-                id: m.id,
-                role: m.role as "user" | "assistant",
-                content: m.content,
-              }))
-            );
+            const restoredMessages = history.map((m) => ({
+              id: m.id,
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            }));
+            messagesRef.current = restoredMessages;
+            summarizingRef.current = false;
+            setMessages(restoredMessages);
+            persistDraft({
+              sessionId,
+              currentSession: sess,
+              messages: restoredMessages,
+              input: inputRefState.current,
+              streaming: false,
+              summarizing: false,
+              tokenCount: sess?.token_count ?? tokenCountRef.current,
+              maxTokens: sess?.max_tokens ?? maxTokensRef.current,
+              error: "",
+            });
+            emitAppEvent(CHAT_SESSIONS_CHANGED_EVENT);
           } catch {
             // Remove placeholder on failure
-            setMessages((prev) => prev.filter((m) => !m.streaming));
+            const restored = messagesRef.current.filter((m) => !m.streaming);
+            messagesRef.current = restored;
+            setMessages(restored);
           }
           setSummarizing(false);
         },
         (err) => {
+          errorRef.current = err;
+          summarizingRef.current = false;
           setError(err);
           setSummarizing(false);
-          setMessages((prev) => prev.filter((m) => !m.streaming));
+          const updated = messagesRef.current.filter((m) => !m.streaming);
+          messagesRef.current = updated;
+          persistDraft({
+            sessionId,
+            currentSession: currentSessionRef.current,
+            messages: updated,
+            input: inputRefState.current,
+            streaming: false,
+            summarizing: false,
+            tokenCount: tokenCountRef.current,
+            maxTokens: maxTokensRef.current,
+            error: err,
+          });
+          setMessages(updated);
         },
         controller.signal,
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Summarize failed");
+      const message = e instanceof Error ? e.message : "Summarize failed";
+      errorRef.current = message;
+      summarizingRef.current = false;
+      setError(message);
       setSummarizing(false);
-      setMessages((prev) => prev.filter((m) => !m.streaming));
+      const updated = messagesRef.current.filter((m) => !m.streaming);
+      messagesRef.current = updated;
+      setMessages(updated);
+      persistDraft({
+        sessionId,
+        currentSession: currentSessionRef.current,
+        messages: updated,
+        input: inputRefState.current,
+        streaming: false,
+        summarizing: false,
+        tokenCount: tokenCountRef.current,
+        maxTokens: maxTokensRef.current,
+        error: message,
+      });
     }
   };
 
@@ -528,16 +929,17 @@ export default function ChatPage() {
         </div>
         <button
           onClick={handleNewChat}
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          disabled={isEmptySession}
+          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
         >
           + New Chat
         </button>
       </div>
 
       {/* Context bar — only show once we have a session with messages */}
-      {sessionId && (messages.length > 0 || tokenCount > 0) && (
+      {sessionId && (messages.length > 0 || tokenCount > 0 || input.trim().length > 0) && (
         <ContextBar
-          tokenCount={tokenCount}
+          tokenCount={liveTokenCount}
           maxTokens={maxTokens}
           onSummarize={handleSummarize}
           summarizing={summarizing}
@@ -632,7 +1034,25 @@ export default function ChatPage() {
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => { setInput(e.target.value); adjustHeight(); }}
+          onChange={(e) => {
+            const next = e.target.value;
+            inputRefState.current = next;
+            setInput(next);
+            if (sessionId) {
+              persistDraft({
+                sessionId,
+                currentSession: currentSessionRef.current,
+                messages: messagesRef.current,
+                input: next,
+                streaming: streamingRef.current,
+                summarizing: summarizingRef.current,
+                tokenCount: tokenCountRef.current,
+                maxTokens: maxTokensRef.current,
+                error: errorRef.current,
+              });
+            }
+            adjustHeight();
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Ask about your applications… (Shift+Enter for newline)"
           disabled={streaming || summarizing || !sessionId}

@@ -11,7 +11,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   getCv,
   saveCvText,
@@ -22,6 +23,11 @@ import {
   deleteCvAnalysis,
   type CvAnalysis,
 } from "@/lib/api";
+import {
+  CV_ANALYSES_CHANGED_EVENT,
+  PROFILE_ANALYSIS_UPDATED_EVENT,
+  emitAppEvent,
+} from "@/lib/app-events";
 import { cn } from "@/lib/utils";
 
 // ── Loading phrases ───────────────────────────────────────────────────────────
@@ -59,6 +65,27 @@ function inlineMarkdown(text: string): React.ReactNode[] {
   });
 }
 
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isTableDivider(line: string): boolean {
+  const cells = parseTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function tableAlign(cell: string): "left" | "center" | "right" {
+  const trimmed = cell.trim();
+  if (trimmed.startsWith(":") && trimmed.endsWith(":")) return "center";
+  if (trimmed.endsWith(":")) return "right";
+  return "left";
+}
+
 function Markdown({ content }: { content: string }) {
   const lines = content.split("\n");
   const nodes: React.ReactNode[] = [];
@@ -79,7 +106,54 @@ function Markdown({ content }: { content: string }) {
       i++;
       while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
       nodes.push(<pre key={i} className="my-2 overflow-x-auto rounded-lg bg-black/30 p-3 text-xs font-mono leading-relaxed"><code>{codeLines.join("\n")}</code></pre>);
+    } else if (line.includes("|") && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      flushList();
+      const header = parseTableRow(line);
+      const alignments = parseTableRow(lines[i + 1]).map(tableAlign);
+      const body: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        body.push(parseTableRow(lines[i]));
+        i++;
+      }
+      nodes.push(
+        <div key={`table-${i}`} className="my-3 overflow-x-auto rounded-lg border border-border">
+          <table className="min-w-full border-collapse text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                {header.map((cell, index) => (
+                  <th
+                    key={`th-${index}`}
+                    className="border-b border-border px-3 py-2 font-semibold"
+                    style={{ textAlign: alignments[index] ?? "left" }}
+                  >
+                    {inlineMarkdown(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {body.map((row, rowIndex) => (
+                <tr key={`tr-${rowIndex}`} className="odd:bg-background even:bg-muted/10">
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={`td-${rowIndex}-${cellIndex}`}
+                      className="border-t border-border px-3 py-2 align-top"
+                      style={{ textAlign: alignments[cellIndex] ?? "left" }}
+                    >
+                      {inlineMarkdown(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
     } else if (line.startsWith("### ")) { flushList(); nodes.push(<p key={i} className="mt-3 mb-0.5 font-semibold">{inlineMarkdown(line.slice(4))}</p>); }
+    else if (line.startsWith("#### ")) { flushList(); nodes.push(<p key={i} className="mt-3 mb-0.5 text-sm font-semibold">{inlineMarkdown(line.slice(5))}</p>); }
+    else if (line.startsWith("##### ")) { flushList(); nodes.push(<p key={i} className="mt-3 mb-0.5 text-sm font-medium">{inlineMarkdown(line.slice(6))}</p>); }
     else if (line.startsWith("## ")) { flushList(); nodes.push(<p key={i} className="mt-3 mb-1 text-base font-bold">{inlineMarkdown(line.slice(3))}</p>); }
     else if (line.startsWith("# ")) { flushList(); nodes.push(<p key={i} className="mt-3 mb-1 text-lg font-bold">{inlineMarkdown(line.slice(2))}</p>); }
     else if (/^[-*] /.test(line)) { if (listType !== "ul") { flushList(); listType = "ul"; } listItems.push(<li key={i}>{inlineMarkdown(line.slice(2))}</li>); }
@@ -103,16 +177,19 @@ function formatDate(iso: string): string {
   }
 }
 
-function trimToWordBoundary(str: string, max: number): string {
-  if (str.length <= max) return str;
-  const cut = str.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+const PROFILE_ANALYSIS_STORAGE_KEY = "jobhound_profile_analysis_draft";
+
+interface ProfileAnalysisDraft {
+  jobDescription: string;
+  analysis: string;
+  streaming: boolean;
+  error: string | null;
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const activeAnalysisId = searchParams.get("a");
 
@@ -136,24 +213,61 @@ export default function ProfilePage() {
   const [loadingPhrase, setLoadingPhrase] = useState("");
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const analysisBottomRef = useRef<HTMLDivElement>(null);
+  const jobDescriptionRef = useRef(jobDescription);
+  const analysisRef = useRef(analysis);
+  const streamingRef = useRef(streaming);
+  const analysisErrorRef = useRef<string | null>(analysisError);
 
   // Save analysis state
-  const [showSaveForm, setShowSaveForm] = useState(false);
-  const [saveTitle, setSaveTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
 
   // Saved analyses state
   const [savedAnalyses, setSavedAnalyses] = useState<CvAnalysis[]>([]);
-  const [expandedAnalysisId, setExpandedAnalysisId] = useState<string | null>(null);
 
   // Delete confirm state
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const persistDraft = useCallback((draft: ProfileAnalysisDraft) => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(PROFILE_ANALYSIS_STORAGE_KEY, JSON.stringify(draft));
+    emitAppEvent(PROFILE_ANALYSIS_UPDATED_EVENT, draft);
+  }, []);
+
+  useEffect(() => {
+    jobDescriptionRef.current = jobDescription;
+  }, [jobDescription]);
+
+  useEffect(() => {
+    analysisRef.current = analysis;
+  }, [analysis]);
+
+  useEffect(() => {
+    streamingRef.current = streaming;
+  }, [streaming]);
+
+  useEffect(() => {
+    analysisErrorRef.current = analysisError;
+  }, [analysisError]);
+
   // Load CV and saved analyses on mount
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const raw = window.sessionStorage.getItem(PROFILE_ANALYSIS_STORAGE_KEY);
+      if (raw) {
+        try {
+          const draft = JSON.parse(raw) as ProfileAnalysisDraft;
+          setJobDescription(draft.jobDescription);
+          setAnalysis(draft.analysis);
+          setStreaming(draft.streaming);
+          setAnalysisError(draft.error);
+        } catch {
+          window.sessionStorage.removeItem(PROFILE_ANALYSIS_STORAGE_KEY);
+        }
+      }
+    }
+
     getCv()
       .then((data) => {
         setCvText(data.cv_text);
@@ -168,12 +282,24 @@ export default function ProfilePage() {
       .catch(() => {/* non-critical */});
   }, []);
 
-  // Auto-expand analysis from URL param
+  useEffect(() => {
+    const handleDraftUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<ProfileAnalysisDraft | null>;
+      if (!customEvent.detail) return;
+      setJobDescription(customEvent.detail.jobDescription);
+      setAnalysis(customEvent.detail.analysis);
+      setStreaming(customEvent.detail.streaming);
+      setAnalysisError(customEvent.detail.error);
+    };
+    window.addEventListener(PROFILE_ANALYSIS_UPDATED_EVENT, handleDraftUpdated);
+    return () => window.removeEventListener(PROFILE_ANALYSIS_UPDATED_EVENT, handleDraftUpdated);
+  }, []);
+
   useEffect(() => {
     if (activeAnalysisId) {
-      setExpandedAnalysisId(activeAnalysisId);
+      router.replace(`/profile/analyses/${activeAnalysisId}`);
     }
-  }, [activeAnalysisId]);
+  }, [activeAnalysisId, router]);
 
   // Cleanup confirm timer on unmount
   useEffect(() => {
@@ -181,11 +307,6 @@ export default function ProfilePage() {
       if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
     };
   }, []);
-
-  // Scroll to bottom as analysis streams
-  useEffect(() => {
-    if (analysis) analysisBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [analysis]);
 
   // Rotating loading phrases while streaming
   useEffect(() => {
@@ -242,8 +363,19 @@ export default function ProfilePage() {
     if (!jobDescription.trim() || streaming) return;
     setAnalysis("");
     setAnalysisError(null);
-    setShowSaveForm(false);
     setStreaming(true);
+    analysisErrorRef.current = null;
+    const initialDraft: ProfileAnalysisDraft = {
+      jobDescription,
+      analysis: "",
+      streaming: true,
+      error: null,
+    };
+    jobDescriptionRef.current = jobDescription;
+    analysisRef.current = "";
+    streamingRef.current = true;
+    analysisErrorRef.current = null;
+    persistDraft(initialDraft);
 
     let llmConfig = {};
     try {
@@ -257,9 +389,39 @@ export default function ProfilePage() {
     await streamCvAnalyze(
       jobDescription,
       llmConfig,
-      (token) => setAnalysis((prev) => prev + token),
-      () => setStreaming(false),
-      (err) => { setAnalysisError(err); setStreaming(false); },
+      (token) => {
+        const next = analysisRef.current + token;
+        analysisRef.current = next;
+        persistDraft({
+          jobDescription: jobDescriptionRef.current,
+          analysis: next,
+          streaming: true,
+          error: null,
+        });
+        setAnalysis(next);
+      },
+      () => {
+        streamingRef.current = false;
+        setStreaming(false);
+        persistDraft({
+          jobDescription: jobDescriptionRef.current,
+          analysis: analysisRef.current,
+          streaming: false,
+          error: null,
+        });
+      },
+      (err) => {
+        analysisErrorRef.current = err;
+        streamingRef.current = false;
+        setAnalysisError(err);
+        setStreaming(false);
+        persistDraft({
+          jobDescription: jobDescriptionRef.current,
+          analysis: analysisRef.current,
+          streaming: false,
+          error: err,
+        });
+      },
       controller.signal,
     );
   };
@@ -267,25 +429,24 @@ export default function ProfilePage() {
   const handleStop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+    streamingRef.current = false;
     setStreaming(false);
+    persistDraft({
+      jobDescription: jobDescriptionRef.current,
+      analysis: analysisRef.current,
+      streaming: false,
+      error: analysisErrorRef.current,
+    });
   };
 
-  const handleOpenSaveForm = () => {
-    // Auto-fill title from first 60 chars of job description
-    const autoTitle = trimToWordBoundary(jobDescription.trim(), 60);
-    setSaveTitle(autoTitle);
-    setShowSaveForm(true);
-  };
-
-  const handleSaveAnalysis = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!saveTitle.trim() || !analysis) return;
+  const handleSaveAnalysis = async () => {
+    if (!analysis || saving) return;
     setSaving(true);
     try {
-      const saved = await saveCvAnalysis(saveTitle.trim(), analysis);
+      const saved = await saveCvAnalysis(analysis, jobDescription);
       setSavedAnalyses((prev) => [saved, ...prev]);
       setSavedMsg(true);
-      setShowSaveForm(false);
+      emitAppEvent(CV_ANALYSES_CHANGED_EVENT);
       setTimeout(() => setSavedMsg(false), 2000);
     } catch {
       // non-critical
@@ -313,7 +474,7 @@ export default function ProfilePage() {
     try {
       await deleteCvAnalysis(id);
       setSavedAnalyses((prev) => prev.filter((a) => a.id !== id));
-      if (expandedAnalysisId === id) setExpandedAnalysisId(null);
+      emitAppEvent(CV_ANALYSES_CHANGED_EVENT);
     } catch {
       // non-critical
     }
@@ -492,7 +653,18 @@ export default function ProfilePage() {
 
         <textarea
           value={jobDescription}
-          onChange={(e) => { setJobDescription(e.target.value); jdAdjustHeight(e.target); }}
+          onChange={(e) => {
+            const next = e.target.value;
+            setJobDescription(next);
+            jobDescriptionRef.current = next;
+            persistDraft({
+              jobDescription: next,
+              analysis: analysisRef.current,
+              streaming: streamingRef.current,
+              error: analysisErrorRef.current,
+            });
+            jdAdjustHeight(e.target);
+          }}
           placeholder="Paste the job description here…"
           rows={4}
           disabled={!cvText.trim()}
@@ -542,50 +714,23 @@ export default function ProfilePage() {
                 <span className="animate-bounce text-lg leading-none [animation-delay:0.2s]">·</span>
               </span>
             )}
-            <div ref={analysisBottomRef} />
           </div>
         )}
 
         {/* Save analysis button — shown once analysis is complete */}
         {analysis && !streaming && (
           <div className="flex items-center gap-3">
-            {!showSaveForm && !savedMsg && (
+            {!savedMsg && (
               <button
-                onClick={handleOpenSaveForm}
+                onClick={handleSaveAnalysis}
+                disabled={saving}
                 className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               >
-                Save Analysis
+                {saving ? "Saving..." : "Save Analysis"}
               </button>
             )}
             {savedMsg && (
               <span className="text-sm font-medium text-green-500">Saved!</span>
-            )}
-            {showSaveForm && (
-              <form onSubmit={handleSaveAnalysis} className="flex flex-1 items-center gap-2">
-                <input
-                  type="text"
-                  value={saveTitle}
-                  onChange={(e) => setSaveTitle(e.target.value)}
-                  placeholder="Analysis title…"
-                  maxLength={120}
-                  autoFocus
-                  className="flex-1 rounded-lg border border-border bg-input px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                <button
-                  type="submit"
-                  disabled={saving || !saveTitle.trim()}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSaveForm(false)}
-                  className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                >
-                  Cancel
-                </button>
-              </form>
             )}
           </div>
         )}
@@ -597,22 +742,15 @@ export default function ProfilePage() {
           <h2 className="text-base font-semibold">Saved Analyses</h2>
           <div className="space-y-2">
             {savedAnalyses.map((a) => {
-              const isExpanded = expandedAnalysisId === a.id;
               const isConfirming = confirmingDeleteId === a.id;
               return (
                 <div key={a.id} className="rounded-lg border border-border overflow-hidden">
-                  <div
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors",
-                      isExpanded ? "bg-muted/40" : "hover:bg-muted/20"
-                    )}
-                    onClick={() => setExpandedAnalysisId(isExpanded ? null : a.id)}
-                  >
-                    <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/20">
+                    <Link href={`/profile/analyses/${a.id}`} className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{a.title}</p>
                       <p className="text-xs text-muted-foreground">{formatDate(a.created_at)}</p>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    </Link>
+                    <div className="flex items-center gap-1 shrink-0">
                       {isConfirming ? (
                         <>
                           <button
@@ -640,20 +778,7 @@ export default function ProfilePage() {
                         </button>
                       )}
                     </div>
-                    <svg
-                      className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-180")}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
                   </div>
-                  {isExpanded && (
-                    <div className="border-t border-border bg-secondary/30 px-5 py-4">
-                      <Markdown content={a.content} />
-                    </div>
-                  )}
                 </div>
               );
             })}

@@ -13,6 +13,10 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { Sidebar } from "@/components/sidebar";
 import {
+  CHAT_SESSIONS_CHANGED_EVENT,
+  CV_ANALYSES_CHANGED_EVENT,
+} from "@/lib/app-events";
+import {
   listChatSessions,
   listCvAnalyses,
   createChatSession,
@@ -23,12 +27,41 @@ import {
 } from "@/lib/api";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  const SIDEBAR_WIDTH_KEY = "jobhound_sidebar_width";
+  const MIN_SIDEBAR_WIDTH = 240;
+  const MAX_SIDEBAR_WIDTH = 420;
   const { data: session, status } = useSession();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [analyses, setAnalyses] = useState<CvAnalysis[]>([]);
+
+  const upsertSession = useCallback((session: ChatSession) => {
+    setSessions((prev) => {
+      const others = prev.filter((s) => s.id !== session.id);
+      return [session, ...others];
+    });
+  }, []);
+
+  const refreshSessions = useCallback(() => {
+    listChatSessions().then(setSessions).catch(() => {});
+  }, []);
+
+  const refreshAnalyses = useCallback(() => {
+    listCvAnalyses().then(setAnalyses).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (!raw) return;
+    const parsed = Number(raw);
+    if (!Number.isNaN(parsed)) {
+      setSidebarWidth(Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, parsed)));
+    }
+  }, []);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -41,9 +74,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // Load sidebar data once authenticated
   useEffect(() => {
     if (status !== "authenticated" || session?.userStatus !== "approved") return;
-    listChatSessions().then(setSessions).catch(() => {});
-    listCvAnalyses().then(setAnalyses).catch(() => {});
-  }, [status, session]);
+    refreshSessions();
+    refreshAnalyses();
+  }, [status, session, refreshSessions, refreshAnalyses]);
+
+  useEffect(() => {
+    const handleSessionsChanged = () => refreshSessions();
+    const handleAnalysesChanged = () => refreshAnalyses();
+    window.addEventListener(CHAT_SESSIONS_CHANGED_EVENT, handleSessionsChanged);
+    window.addEventListener(CV_ANALYSES_CHANGED_EVENT, handleAnalysesChanged);
+    return () => {
+      window.removeEventListener(CHAT_SESSIONS_CHANGED_EVENT, handleSessionsChanged);
+      window.removeEventListener(CV_ANALYSES_CHANGED_EVENT, handleAnalysesChanged);
+    };
+  }, [refreshAnalyses, refreshSessions]);
 
   const handleDeleteSession = useCallback(async (id: string) => {
     try {
@@ -66,12 +110,35 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const handleNewChat = useCallback(async () => {
     try {
       const newSession = await createChatSession();
-      setSessions((prev) => [newSession, ...prev]);
+      upsertSession(newSession);
       router.push(`/chat?s=${newSession.id}`);
     } catch {
       // non-critical
     }
-  }, [router]);
+  }, [router, upsertSession]);
+
+  const handleSidebarResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const nextWidth = Math.min(
+        MAX_SIDEBAR_WIDTH,
+        Math.max(MIN_SIDEBAR_WIDTH, startWidth + moveEvent.clientX - startX)
+      );
+      setSidebarWidth(nextWidth);
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(nextWidth));
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
 
   if (status === "loading") {
     return (
@@ -93,6 +160,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         onDeleteSession={handleDeleteSession}
         onDeleteAnalysis={handleDeleteAnalysis}
         onNewChat={handleNewChat}
+        profileHref="/profile"
+        width={sidebarWidth}
+        onResizeStart={handleSidebarResizeStart}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">

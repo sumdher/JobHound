@@ -20,6 +20,12 @@ export interface LLMConfig {
   baseUrl?: string;
 }
 
+export function estimateTokens(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) return 0;
+  return Math.max(1, Math.ceil(normalized.length / 4));
+}
+
 function getLLMConfig(): LLMConfig {
   if (typeof window === "undefined") return {};
   try {
@@ -369,6 +375,7 @@ export async function clearChatSessionHistory(id: string): Promise<void> {
 export interface CvAnalysis {
   id: string;
   title: string;
+  job_description?: string | null;
   content: string;
   created_at: string;
 }
@@ -377,10 +384,18 @@ export async function listCvAnalyses(): Promise<CvAnalysis[]> {
   return apiFetch<CvAnalysis[]>("/api/user/cv/analyses");
 }
 
-export async function saveCvAnalysis(title: string, content: string): Promise<CvAnalysis> {
+export async function getCvAnalysis(id: string): Promise<CvAnalysis> {
+  return apiFetch<CvAnalysis>(`/api/user/cv/analyses/${id}`);
+}
+
+export async function saveCvAnalysis(content: string, jobDescription?: string, title?: string): Promise<CvAnalysis> {
   return apiFetch<CvAnalysis>("/api/user/cv/analyses", {
     method: "POST",
-    body: JSON.stringify({ title, content }),
+    body: JSON.stringify({
+      content,
+      ...(jobDescription?.trim() ? { job_description: jobDescription } : {}),
+      ...(title?.trim() ? { title } : {}),
+    }),
   });
 }
 

@@ -9,7 +9,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
@@ -22,11 +22,6 @@ const STATIC_NAV = [
   { href: "/applications/new", label: "New Application", icon: "✚" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
-
-function truncate(str: string, max: number): string {
-  if (str.length <= max) return str;
-  return str.slice(0, max) + "…";
-}
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -54,6 +49,9 @@ export function Sidebar({
   onDeleteSession,
   onDeleteAnalysis,
   onNewChat,
+  profileHref,
+  width,
+  onResizeStart,
 }: {
   open: boolean;
   onClose: () => void;
@@ -62,14 +60,18 @@ export function Sidebar({
   onDeleteSession: (id: string) => void;
   onDeleteAnalysis: (id: string) => void;
   onNewChat: () => void;
+  profileHref: string;
+  width: number;
+  onResizeStart: (event: React.MouseEvent<HTMLDivElement>) => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const { data: session } = useSession();
 
   const activeSessionId = searchParams.get("s");
-  const activeAnalysisId = searchParams.get("a");
+  const activeAnalysisId = pathname.startsWith("/profile/analyses/")
+    ? pathname.split("/").pop()
+    : searchParams.get("a");
 
   // Persist open/closed state in localStorage
   const [chatOpen, setChatOpen] = useState<boolean>(() => {
@@ -109,14 +111,12 @@ export function Sidebar({
     const next = !chatOpen;
     setChatOpen(next);
     localStorage.setItem("jobhound_sidebar_chat_open", String(next));
-    router.push("/chat");
   };
 
   const toggleProfile = () => {
     const next = !profileOpen;
     setProfileOpen(next);
     localStorage.setItem("jobhound_sidebar_profile_open", String(next));
-    router.push("/profile");
   };
 
   const startDeleteSession = (id: string) => {
@@ -158,7 +158,8 @@ export function Sidebar({
   };
 
   const isChatActive = pathname === "/chat";
-  const isProfileActive = pathname === "/profile";
+  const isProfileActive = pathname.startsWith("/profile");
+  const hasEmptyChat = sessions.some((s) => s.message_count === 0);
 
   return (
     <>
@@ -175,11 +176,12 @@ export function Sidebar({
       {/* Sidebar panel */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex h-full w-64 flex-col border-r border-border bg-card",
+          "fixed inset-y-0 left-0 z-50 flex h-full flex-col border-r border-border bg-card",
           "transition-transform duration-300 ease-in-out",
           "lg:static lg:translate-x-0 lg:transition-none",
           open ? "translate-x-0" : "-translate-x-full"
         )}
+        style={{ width }}
       >
         {/* Logo */}
         <div className="flex h-16 items-center gap-2 border-b border-border px-4">
@@ -225,19 +227,29 @@ export function Sidebar({
 
           {/* AI Chat collapsible group */}
           <div>
-            <button
-              onClick={toggleChat}
+            <div
               className={cn(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center rounded-lg text-sm font-medium transition-colors",
                 isChatActive
                   ? "bg-primary/20 text-primary"
                   : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               )}
             >
-              <span className="text-base">💬</span>
-              <span className="flex-1 text-left">AI Chat</span>
-              <ChevronIcon open={chatOpen} />
-            </button>
+              <button
+                onClick={onNewChat}
+                className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left"
+              >
+                <span className="text-base">💬</span>
+                <span className="truncate">AI Chat</span>
+              </button>
+              <button
+                onClick={toggleChat}
+                className="shrink-0 rounded-r-lg px-3 py-2"
+                aria-label={chatOpen ? "Collapse AI Chat" : "Expand AI Chat"}
+              >
+                <ChevronIcon open={chatOpen} />
+              </button>
+            </div>
 
             {chatOpen && (
               <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
@@ -259,7 +271,7 @@ export function Sidebar({
                         className="flex-1 min-w-0 truncate"
                         title={s.title}
                       >
-                        {truncate(s.title, 25)}
+                        {s.title}
                       </Link>
                       {isConfirming ? (
                         <span className="flex items-center gap-0.5 shrink-0">
@@ -290,31 +302,43 @@ export function Sidebar({
                     </div>
                   );
                 })}
-                <button
-                  onClick={onNewChat}
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <span className="font-medium">+ New Chat</span>
-                </button>
+                {!hasEmptyChat && (
+                  <button
+                    onClick={onNewChat}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                  >
+                    <span className="font-medium">+ New Chat</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
 
           {/* My Profile collapsible group */}
           <div>
-            <button
-              onClick={toggleProfile}
+            <div
               className={cn(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center rounded-lg text-sm font-medium transition-colors",
                 isProfileActive
                   ? "bg-primary/20 text-primary"
                   : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               )}
             >
-              <span className="text-base">👤</span>
-              <span className="flex-1 text-left">My Profile</span>
-              <ChevronIcon open={profileOpen} />
-            </button>
+              <Link
+                href={profileHref}
+                className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2"
+              >
+                <span className="text-base">👤</span>
+                <span className="truncate">My Profile</span>
+              </Link>
+              <button
+                onClick={toggleProfile}
+                className="shrink-0 rounded-r-lg px-3 py-2"
+                aria-label={profileOpen ? "Collapse My Profile" : "Expand My Profile"}
+              >
+                <ChevronIcon open={profileOpen} />
+              </button>
+            </div>
 
             {profileOpen && (
               <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
@@ -332,11 +356,11 @@ export function Sidebar({
                       )}
                     >
                       <Link
-                        href={`/profile?a=${a.id}`}
+                        href={`/profile/analyses/${a.id}`}
                         className="flex-1 min-w-0 truncate"
                         title={a.title}
                       >
-                        {truncate(a.title, 25)}
+                        {a.title}
                       </Link>
                       {isConfirming ? (
                         <span className="flex items-center gap-0.5 shrink-0">
@@ -433,6 +457,14 @@ export function Sidebar({
             </div>
           </div>
         )}
+
+        <div
+          onMouseDown={onResizeStart}
+          className="absolute right-0 top-0 hidden h-full w-2 cursor-col-resize lg:block"
+          aria-hidden
+        >
+          <div className="mx-auto h-full w-px bg-border/60 transition-colors hover:bg-primary" />
+        </div>
       </aside>
     </>
   );

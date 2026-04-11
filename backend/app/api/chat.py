@@ -73,7 +73,13 @@ def estimate_tokens(text: str) -> int:
 
 
 def _title_from_message(msg: str) -> str:
-    msg = msg.strip()
+    msg = " ".join(msg.strip().split())
+    for prefix in ("**", "*", "#", "-", "•"):
+        if msg.startswith(prefix):
+            msg = msg.lstrip("*#-• ").strip()
+    for label in ("job title:", "title:", "role:", "position:"):
+        if msg.lower().startswith(label):
+            msg = msg[len(label):].strip()
     if len(msg) <= 60:
         return msg
     truncated = msg[:60]
@@ -156,10 +162,11 @@ async def create_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    session = ChatSession(user_id=current_user.id, title="New Chat")
-    db.add(session)
-    await db.commit()
-    await db.refresh(session)
+    session = await _get_or_create_empty_session(current_user.id, db)
+    count_result = await db.execute(
+        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == session.id)
+    )
+    message_count = count_result.scalar_one()
     return SessionOut(
         id=str(session.id),
         title=session.title,
@@ -167,7 +174,7 @@ async def create_session(
         max_tokens=DEFAULT_CONTEXT,
         created_at=session.created_at.isoformat(),
         updated_at=session.updated_at.isoformat(),
-        message_count=0,
+        message_count=message_count,
     )
 
 
@@ -526,4 +533,28 @@ async def _get_session(
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    return session
+
+
+async def _get_or_create_empty_session(
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> ChatSession:
+    result = await db.execute(
+        select(ChatSession)
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user_id)
+        .group_by(ChatSession.id)
+        .having(func.count(ChatMessage.id) == 0)
+        .order_by(ChatSession.updated_at.desc())
+        .limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session is not None:
+        return session
+
+    session = ChatSession(user_id=user_id, title="New Chat")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
     return session
