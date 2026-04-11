@@ -92,6 +92,60 @@ docker compose up
 # API Docs: http://localhost:8000/docs
 ```
 
+## Production Deployment with Docker Compose
+
+Use [`docker-compose.prod.yml`](docker-compose.prod.yml) for a production-oriented stack. It keeps the existing development setup in [`docker-compose.yml`](docker-compose.yml) untouched while switching frontend and backend builds to their `production` Docker targets, removing source bind mounts, and wiring in a Cloudflare Tunnel sidecar that authenticates with a tunnel token from the root env file.
+
+```bash
+# 1. Create runtime env files
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+
+# 2. Update production values
+# - set strong secrets
+# - set APP_URL to your public HTTPS URL
+# - set NEXTAUTH_URL to your public HTTPS URL
+# - set provider credentials/API keys
+
+# 3. Configure the Cloudflare Tunnel
+cp deploy/cloudflared/config.example.yml deploy/cloudflared/config.yml
+# edit deploy/cloudflared/config.yml
+# add CLOUDFLARE_TUNNEL_TOKEN=<your-tunnel-token> to the root .env
+#
+# If you keep the real config file outside the repo, set this in the root `.env`
+# instead of copying it into `deploy/cloudflared/`:
+# CLOUDFLARED_CONFIG_PATH=/absolute/path/to/config.yml
+
+# 4. Start the production stack
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Production characteristics:
+
+- frontend and backend use the existing Docker `production` targets
+- no source-code bind mounts or dev-only Next.js cache mounts
+- PostgreSQL data stays in a named volume
+- backend runs database migrations before starting
+- frontend, backend, and database all have container healthchecks
+- Cloudflare Tunnel uses a pinned image version, local config file, and token-based authentication from the root `.env`
+
+For production, the tunnel now requires:
+
+- a root [`.env.example`](.env.example) value for `CLOUDFLARE_TUNNEL_TOKEN`
+- a real local [`deploy/cloudflared/config.yml`](deploy/cloudflared/config.yml) file, unless you point [`docker-compose.prod.yml`](docker-compose.prod.yml) at another config path with `CLOUDFLARED_CONFIG_PATH`
+
+Unlike the previous setup, production no longer requires a live `credentials.json` bind mount inside the repository.
+
+By default [`docker-compose.prod.yml`](docker-compose.prod.yml) looks for the config file at [`deploy/cloudflared/config.yml`](deploy/cloudflared/config.yml). If your local secrets workflow stores that file somewhere else, point Compose at it with `CLOUDFLARED_CONFIG_PATH` in the root `.env`.
+
+The production tunnel container reads its authentication token from `CLOUDFLARE_TUNNEL_TOKEN` in the root `.env` and starts [`cloudflared`](docker-compose.prod.yml:73) with a token-based `tunnel run` command. Keep that token out of git and out of the repository tree.
+
+For production, set at least these values before startup:
+
+- root [`.env.example`](.env.example): `CLOUDFLARE_TUNNEL_TOKEN` and optional `CLOUDFLARED_CONFIG_PATH`
+- [`backend/.env.example`](backend/.env.example): `DATABASE_URL`, `JWT_SECRET`, `APP_URL`, OAuth credentials, any LLM/embedder provider secrets
+- [`frontend/.env.example`](frontend/.env.example): `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, OAuth credentials
+
 ## Environment Variables
 
 ### Backend (`backend/.env`)

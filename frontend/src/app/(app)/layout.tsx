@@ -187,7 +187,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <Image src="/logo.svg" alt="JobHound" width={24} height={24} />
+          <Image src="/icon.svg" alt="JobHound" width={24} height={24} unoptimized />
           <span className="text-base font-bold tracking-tight">JobHound</span>
         </header>
 

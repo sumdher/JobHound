@@ -186,7 +186,7 @@ export function Sidebar({
         {/* Logo */}
         <div className="flex h-16 items-center gap-2 border-b border-border px-4">
           <Link href="/dashboard" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <Image src="/logo.svg" alt="JobHound" width={38} height={38} priority />
+            <Image src="/icon.svg" alt="JobHound" width={38} height={38} priority unoptimized />
             <span className="text-xl font-bold tracking-tight">JobHound</span>
           </Link>
           <button

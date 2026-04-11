@@ -120,6 +120,10 @@ interface FormData {
   raw_input: string;
 }
 
+function formatParsedSalary(value: unknown): string {
+  return typeof value === "number" ? String(Math.round(value / 100)) : "";
+}
+
 const EMPTY_FORM: FormData = {
   company: "",
   job_title: "",
@@ -627,8 +631,8 @@ export default function NewApplicationPage() {
         location: String(p.location ?? ""),
         work_mode: String(p.work_mode ?? ""),
         whats_in_it_for_me: String(p.whats_in_it_for_me ?? ""),
-        salary_min: p.salary_min != null ? String(Math.round(p.salary_min / 100)) : "",
-        salary_max: p.salary_max != null ? String(Math.round(p.salary_max / 100)) : "",
+        salary_min: formatParsedSalary(p.salary_min),
+        salary_max: formatParsedSalary(p.salary_max),
         salary_currency: String(p.salary_currency ?? "EUR"),
         job_url: String(p.job_url ?? ""),
         cv_link: String(p.cv_link ?? ""),
