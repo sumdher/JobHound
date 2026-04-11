@@ -35,7 +35,10 @@ _ACTION_TOKEN_EXPIRY_HOURS = 72
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     """Dependency: require the request to come from the configured admin email."""
-    if not settings.admin_email or current_user.email.lower() != settings.admin_email.lower():
+    configured_admin = (settings.admin_email or "").strip().lower()
+    current_email = (current_user.email or "").strip().lower()
+
+    if not configured_admin or current_email != configured_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 

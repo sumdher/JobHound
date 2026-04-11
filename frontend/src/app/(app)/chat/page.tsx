@@ -7,7 +7,15 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   listChatSessions,
@@ -16,6 +24,8 @@ import {
   streamChat,
   streamSummarize,
   estimateTokens,
+  type ChatHistoryMessageInput,
+  type ChatMessageHistoryItem,
   type ChatSession,
 } from "@/lib/api";
 import {
@@ -27,21 +37,252 @@ import { cn } from "@/lib/utils";
 
 interface Message {
   id?: number;
+  clientId: string;
   role: "user" | "assistant";
   content: string;
+  parentClientId: string | null;
+  childrenIds: string[];
+  createdAt?: string;
   streaming?: boolean;
+}
+
+interface ConversationTree {
+  nodes: Record<string, Message>;
+  rootIds: string[];
+  selectedChildByParent: Record<string, string>;
 }
 
 interface ChatDraft {
   sessionId: string;
   currentSession: ChatSession | null;
-  messages: Message[];
+  conversation: ConversationTree;
   input: string;
   streaming: boolean;
   summarizing: boolean;
   tokenCount: number;
   maxTokens: number;
   error: string;
+}
+
+interface LegacyDraft {
+  sessionId: string;
+  currentSession: ChatSession | null;
+  messages?: Array<Pick<Message, "id" | "role" | "content" | "streaming">>;
+  conversation?: ConversationTree;
+  input: string;
+  streaming: boolean;
+  summarizing: boolean;
+  tokenCount: number;
+  maxTokens: number;
+  error: string;
+}
+
+const ROOT_PARENT_KEY = "__root__";
+
+function getParentKey(parentClientId: string | null): string {
+  return parentClientId ?? ROOT_PARENT_KEY;
+}
+
+function createEmptyConversation(): ConversationTree {
+  return {
+    nodes: {},
+    rootIds: [],
+    selectedChildByParent: {},
+  };
+}
+
+function createClientId(prefix: string): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function cloneConversation(conversation: ConversationTree): ConversationTree {
+  return {
+    nodes: Object.fromEntries(
+      Object.entries(conversation.nodes).map(([clientId, message]) => [
+        clientId,
+        {
+          ...message,
+          childrenIds: [...message.childrenIds],
+        },
+      ])
+    ),
+    rootIds: [...conversation.rootIds],
+    selectedChildByParent: { ...conversation.selectedChildByParent },
+  };
+}
+
+function upsertConversationMessage(
+  conversation: ConversationTree,
+  message: Omit<Message, "childrenIds"> & { childrenIds?: string[] },
+  options: { select?: boolean } = {}
+): ConversationTree {
+  const next = cloneConversation(conversation);
+  const existing = next.nodes[message.clientId];
+  next.nodes[message.clientId] = {
+    ...existing,
+    ...message,
+    childrenIds: existing?.childrenIds ?? [...(message.childrenIds ?? [])],
+  } as Message;
+
+  if (message.parentClientId) {
+    const parent = next.nodes[message.parentClientId];
+    if (parent && !parent.childrenIds.includes(message.clientId)) {
+      parent.childrenIds = [...parent.childrenIds, message.clientId];
+    }
+  } else if (!next.rootIds.includes(message.clientId)) {
+    next.rootIds = [...next.rootIds, message.clientId];
+  }
+
+  if (options.select ?? true) {
+    next.selectedChildByParent[getParentKey(message.parentClientId)] = message.clientId;
+  }
+
+  return next;
+}
+
+function updateConversationMessage(
+  conversation: ConversationTree,
+  clientId: string,
+  updater: (message: Message) => Message
+): ConversationTree {
+  const existing = conversation.nodes[clientId];
+  if (!existing) return conversation;
+  const next = cloneConversation(conversation);
+  next.nodes[clientId] = updater(next.nodes[clientId]);
+  return next;
+}
+
+function removeConversationMessage(conversation: ConversationTree, clientId: string): ConversationTree {
+  const existing = conversation.nodes[clientId];
+  if (!existing) return conversation;
+  const next = cloneConversation(conversation);
+
+  delete next.nodes[clientId];
+  delete next.selectedChildByParent[clientId];
+
+  if (existing.parentClientId) {
+    const parent = next.nodes[existing.parentClientId];
+    if (parent) {
+      parent.childrenIds = parent.childrenIds.filter((childId) => childId !== clientId);
+      const parentKey = getParentKey(existing.parentClientId);
+      if (next.selectedChildByParent[parentKey] === clientId) {
+        if (parent.childrenIds.length > 0) next.selectedChildByParent[parentKey] = parent.childrenIds[parent.childrenIds.length - 1];
+        else delete next.selectedChildByParent[parentKey];
+      }
+    }
+  } else {
+    next.rootIds = next.rootIds.filter((rootId) => rootId !== clientId);
+    if (next.selectedChildByParent[ROOT_PARENT_KEY] === clientId) {
+      if (next.rootIds.length > 0) next.selectedChildByParent[ROOT_PARENT_KEY] = next.rootIds[next.rootIds.length - 1];
+      else delete next.selectedChildByParent[ROOT_PARENT_KEY];
+    }
+  }
+
+  return next;
+}
+
+function getSelectedChildId(conversation: ConversationTree, parentClientId: string | null, childIds: string[]): string | null {
+  if (childIds.length === 0) return null;
+  const selected = conversation.selectedChildByParent[getParentKey(parentClientId)];
+  if (selected && childIds.includes(selected)) return selected;
+  return childIds[childIds.length - 1] ?? null;
+}
+
+function getVisibleMessageIds(conversation: ConversationTree): string[] {
+  const visibleIds: string[] = [];
+  let currentId = getSelectedChildId(conversation, null, conversation.rootIds);
+
+  while (currentId) {
+    visibleIds.push(currentId);
+    const current = conversation.nodes[currentId];
+    if (!current) break;
+    currentId = getSelectedChildId(conversation, current.clientId, current.childrenIds);
+  }
+
+  return visibleIds;
+}
+
+function getVisibleMessages(conversation: ConversationTree): Message[] {
+  return getVisibleMessageIds(conversation)
+    .map((clientId) => conversation.nodes[clientId])
+    .filter((message): message is Message => Boolean(message));
+}
+
+function getActiveLeafClientId(conversation: ConversationTree): string | null {
+  const ids = getVisibleMessageIds(conversation);
+  return ids[ids.length - 1] ?? null;
+}
+
+function getSiblings(conversation: ConversationTree, clientId: string): string[] {
+  const message = conversation.nodes[clientId];
+  if (!message) return [];
+  return message.parentClientId ? conversation.nodes[message.parentClientId]?.childrenIds ?? [] : conversation.rootIds;
+}
+
+function buildConversationFromLegacyMessages(
+  messages: Array<Pick<Message, "id" | "role" | "content" | "streaming">>
+): ConversationTree {
+  let previousClientId: string | null = null;
+  return messages.reduce((conversation, message, index) => {
+    const clientId = `legacy-${message.id ?? index}`;
+    const next = upsertConversationMessage(conversation, {
+      id: message.id,
+      clientId,
+      role: message.role,
+      content: message.content,
+      parentClientId: previousClientId,
+      streaming: message.streaming,
+      createdAt: undefined,
+    });
+    previousClientId = clientId;
+    return next;
+  }, createEmptyConversation());
+}
+
+function buildConversationFromHistory(history: ChatMessageHistoryItem[]): ConversationTree {
+  let previousClientId: string | null = null;
+  return history.reduce((conversation, message) => {
+    const metadata = message.metadata ?? undefined;
+    const clientId = metadata?.client_id ?? `db-${message.id}`;
+    const parentClientId = metadata && Object.prototype.hasOwnProperty.call(metadata, "parent_client_id")
+      ? metadata.parent_client_id ?? null
+      : previousClientId;
+
+    const next = upsertConversationMessage(conversation, {
+      id: message.id,
+      clientId,
+      role: message.role as "user" | "assistant",
+      content: message.content,
+      parentClientId,
+      createdAt: message.created_at,
+      streaming: false,
+    });
+    previousClientId = clientId;
+    return next;
+  }, createEmptyConversation());
+}
+
+function normalizeDraft(raw: string): ChatDraft | null {
+  try {
+    const parsed = JSON.parse(raw) as LegacyDraft;
+    return {
+      sessionId: parsed.sessionId,
+      currentSession: parsed.currentSession,
+      conversation:
+        parsed.conversation ?? buildConversationFromLegacyMessages(parsed.messages ?? []),
+      input: parsed.input ?? "",
+      streaming: parsed.streaming ?? false,
+      summarizing: parsed.summarizing ?? false,
+      tokenCount: parsed.tokenCount ?? 0,
+      maxTokens: parsed.maxTokens ?? 8192,
+      error: parsed.error ?? "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 const SUGGESTIONS = [
@@ -151,7 +392,7 @@ function getChatDraftStorageKey(sessionId: string): string {
 
 // ── Markdown renderer ──────────────────────────────────────────────────────────
 
-function inlineMarkdown(text: string): React.ReactNode[] {
+function inlineMarkdown(text: string): ReactNode[] {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**"))
@@ -191,9 +432,9 @@ function tableAlign(cell: string): "left" | "center" | "right" {
 
 function Markdown({ content }: { content: string }) {
   const lines = content.split("\n");
-  const nodes: React.ReactNode[] = [];
+  const nodes: ReactNode[] = [];
   let i = 0;
-  let listItems: React.ReactNode[] = [];
+  let listItems: ReactNode[] = [];
   let listType: "ul" | "ol" | null = null;
 
   const flushList = () => {
@@ -368,7 +609,7 @@ export default function ChatPage() {
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversation, setConversation] = useState<ConversationTree>(createEmptyConversation());
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [streaming, setStreaming] = useState(false);
@@ -377,20 +618,24 @@ export default function ChatPage() {
   const [error, setError] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
   const [maxTokens, setMaxTokens] = useState(8192);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string | null>(sessionId);
   const currentSessionRef = useRef<ChatSession | null>(currentSession);
-  const messagesRef = useRef<Message[]>(messages);
+  const conversationRef = useRef<ConversationTree>(conversation);
   const inputRefState = useRef(input);
   const streamingRef = useRef(streaming);
   const summarizingRef = useRef(summarizing);
   const tokenCountRef = useRef(tokenCount);
   const maxTokensRef = useRef(maxTokens);
   const errorRef = useRef(error);
-  const isEmptySession = currentSession?.message_count === 0;
+  const messages = useMemo(() => getVisibleMessages(conversation), [conversation]);
+  const isEmptySession = (currentSession?.message_count ?? 0) === 0 && Object.keys(conversation.nodes).length === 0;
   const liveTokenCount = getLiveContextTokenCount(tokenCount, input, messages, streaming);
 
   const persistDraft = useCallback((draft: ChatDraft) => {
@@ -398,6 +643,24 @@ export default function ChatPage() {
     window.sessionStorage.setItem(getChatDraftStorageKey(draft.sessionId), JSON.stringify(draft));
     emitAppEvent(CHAT_DRAFT_UPDATED_EVENT, draft);
   }, []);
+
+  const persistCurrentState = useCallback((overrides: Partial<ChatDraft> = {}) => {
+    const activeSessionId = overrides.sessionId ?? sessionIdRef.current;
+    if (!activeSessionId) return;
+
+    persistDraft({
+      sessionId: activeSessionId,
+      currentSession:
+        overrides.currentSession !== undefined ? overrides.currentSession : currentSessionRef.current,
+      conversation: overrides.conversation ?? conversationRef.current,
+      input: overrides.input ?? inputRefState.current,
+      streaming: overrides.streaming ?? streamingRef.current,
+      summarizing: overrides.summarizing ?? summarizingRef.current,
+      tokenCount: overrides.tokenCount ?? tokenCountRef.current,
+      maxTokens: overrides.maxTokens ?? maxTokensRef.current,
+      error: overrides.error ?? errorRef.current,
+    });
+  }, [persistDraft]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -408,8 +671,8 @@ export default function ChatPage() {
   }, [currentSession]);
 
   useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+    conversationRef.current = conversation;
+  }, [conversation]);
 
   useEffect(() => {
     inputRefState.current = input;
@@ -453,11 +716,11 @@ export default function ChatPage() {
         if (typeof window !== "undefined") {
           const raw = window.sessionStorage.getItem(getChatDraftStorageKey(sessionIdParam));
           if (raw) {
-            try {
-              draft = JSON.parse(raw) as ChatDraft;
+            draft = normalizeDraft(raw);
+            if (draft) {
               sessionIdRef.current = draft.sessionId;
               currentSessionRef.current = draft.currentSession;
-              messagesRef.current = draft.messages;
+              conversationRef.current = draft.conversation;
               inputRefState.current = draft.input;
               streamingRef.current = draft.streaming;
               summarizingRef.current = draft.summarizing;
@@ -466,14 +729,14 @@ export default function ChatPage() {
               errorRef.current = draft.error;
               setCurrentSession(draft.currentSession);
               setSessionId(draft.sessionId);
-              setMessages(draft.messages);
+              setConversation(draft.conversation);
               setInput(draft.input);
               setStreaming(draft.streaming);
               setSummarizing(draft.summarizing);
               setTokenCount(draft.tokenCount);
               setMaxTokens(draft.maxTokens);
               setError(draft.error);
-            } catch {
+            } else {
               window.sessionStorage.removeItem(getChatDraftStorageKey(sessionIdParam));
             }
           }
@@ -499,18 +762,9 @@ export default function ChatPage() {
           setTokenCount(sess?.token_count ?? 0);
 
           if (!draft?.streaming && !draft?.summarizing) {
-            setMessages(
-              history.map((m) => ({
-                id: m.id,
-                role: m.role as "user" | "assistant",
-                content: m.content,
-              }))
-            );
-            messagesRef.current = history.map((m) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            }));
+            const restoredConversation = buildConversationFromHistory(history);
+            conversationRef.current = restoredConversation;
+            setConversation(restoredConversation);
             setInput(draft?.input ?? "");
             setError("");
           } else {
@@ -552,7 +806,7 @@ export default function ChatPage() {
       const draft = customEvent.detail;
       sessionIdRef.current = draft.sessionId;
       currentSessionRef.current = draft.currentSession;
-      messagesRef.current = draft.messages;
+      conversationRef.current = draft.conversation;
       inputRefState.current = draft.input;
       streamingRef.current = draft.streaming;
       summarizingRef.current = draft.summarizing;
@@ -561,7 +815,7 @@ export default function ChatPage() {
       errorRef.current = draft.error;
       setCurrentSession(draft.currentSession);
       setSessionId(draft.sessionId);
-      setMessages(draft.messages);
+      setConversation(draft.conversation);
       setInput(draft.input);
       setStreaming(draft.streaming);
       setSummarizing(draft.summarizing);
@@ -574,7 +828,13 @@ export default function ChatPage() {
   }, [sessionIdParam]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
   // Cycle loading phrases while streaming
@@ -587,102 +847,101 @@ export default function ChatPage() {
     return () => clearInterval(id);
   }, [streaming]);
 
-  const handleSend = async (text?: string) => {
-    const msg = (text ?? input).trim();
-    if (!msg || streaming || summarizing || !sessionId) return;
+  const streamAssistantReply = useCallback(async ({
+    message,
+    history,
+    nextConversation,
+    assistantClientId,
+    persistUserMessage,
+    inputValue,
+    userParentClientId,
+    assistantParentClientId,
+  }: {
+    message: string;
+    history: ChatHistoryMessageInput[];
+    nextConversation: ConversationTree;
+    assistantClientId: string;
+    persistUserMessage: boolean;
+    inputValue: string;
+    userParentClientId?: string | null;
+    assistantParentClientId: string;
+  }) => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId) return;
 
-    setInput("");
-    setError("");
-    errorRef.current = "";
-    if (inputRef.current) inputRef.current.style.height = "auto";
-
-    const userMessage: Message = { role: "user", content: msg };
-    const assistantMessage: Message = { role: "assistant", content: "", streaming: true };
-    const nextMessages = [...messagesRef.current, userMessage, assistantMessage];
-
-    inputRefState.current = "";
-    messagesRef.current = nextMessages;
-    streamingRef.current = true;
-    setMessages(nextMessages);
-    setStreaming(true);
-    persistDraft({
-      sessionId,
-      currentSession: currentSessionRef.current,
-      messages: nextMessages,
-      input: "",
-      streaming: true,
-      summarizing: false,
-      tokenCount: tokenCountRef.current,
-      maxTokens: maxTokensRef.current,
-      error: "",
-    });
-
+    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
+    errorRef.current = "";
+    streamingRef.current = true;
+    inputRefState.current = inputValue;
+    conversationRef.current = nextConversation;
+
+    setError("");
+    setStreaming(true);
+    setInput(inputValue);
+    setConversation(nextConversation);
+    persistCurrentState({
+      conversation: nextConversation,
+      input: inputValue,
+      streaming: true,
+      summarizing: false,
+      error: "",
+    });
+
     try {
       await streamChat(
-        msg,
+        message,
         (token) => {
-          const updated = [...messagesRef.current];
-          const last = updated[updated.length - 1];
-          if (last?.streaming) {
-            updated[updated.length - 1] = { ...last, content: last.content + token };
-          }
-          messagesRef.current = updated;
-          persistDraft({
-            sessionId,
-            currentSession: currentSessionRef.current,
-            messages: updated,
-            input: inputRefState.current,
+          const updatedConversation = updateConversationMessage(conversationRef.current, assistantClientId, (assistantMessage) => ({
+            ...assistantMessage,
+            content: assistantMessage.content + token,
+          }));
+          conversationRef.current = updatedConversation;
+          setConversation(updatedConversation);
+          persistCurrentState({
+            conversation: updatedConversation,
             streaming: true,
             summarizing: false,
-            tokenCount: tokenCountRef.current,
-            maxTokens: maxTokensRef.current,
             error: "",
           });
-          setMessages(updated);
         },
         () => {
-          const updated = [...messagesRef.current];
-          const last = updated[updated.length - 1];
-          if (last?.streaming) {
-            updated[updated.length - 1] = { ...last, streaming: false };
-          }
-          messagesRef.current = updated;
+          const updatedConversation = updateConversationMessage(conversationRef.current, assistantClientId, (assistantMessage) => ({
+            ...assistantMessage,
+            streaming: false,
+          }));
+          conversationRef.current = updatedConversation;
           streamingRef.current = false;
-          persistDraft({
-            sessionId,
-            currentSession: currentSessionRef.current,
-            messages: updated,
-            input: inputRefState.current,
+          setConversation(updatedConversation);
+          setStreaming(false);
+          persistCurrentState({
+            conversation: updatedConversation,
             streaming: false,
             summarizing: false,
-            tokenCount: tokenCountRef.current,
-            maxTokens: maxTokensRef.current,
             error: "",
           });
-          setMessages(updated);
-          setStreaming(false);
         },
         async (meta) => {
           tokenCountRef.current = meta.token_count;
           setTokenCount(meta.token_count);
           try {
             const sessions = await listChatSessions();
-            const sess = sessions.find((s) => s.id === meta.session_id) ?? null;
+            const sess = sessions.find((item) => item.id === meta.session_id) ?? null;
             currentSessionRef.current = sess;
             setCurrentSession(sess);
+            if (sess?.max_tokens) {
+              maxTokensRef.current = sess.max_tokens;
+              setMaxTokens(sess.max_tokens);
+            }
             emitAppEvent(CHAT_SESSIONS_CHANGED_EVENT);
-            persistDraft({
-              sessionId,
+            persistCurrentState({
               currentSession: sess,
-              messages: messagesRef.current,
-              input: inputRefState.current,
-              streaming: false,
-              summarizing: false,
               tokenCount: meta.token_count,
               maxTokens: sess?.max_tokens ?? maxTokensRef.current,
+              streaming: false,
+              summarizing: false,
               error: "",
             });
           } catch {
@@ -694,50 +953,93 @@ export default function ChatPage() {
           streamingRef.current = false;
           setError(err);
           setStreaming(false);
-          const updated = [...messagesRef.current];
-          const last = updated[updated.length - 1];
-          if (last?.streaming) {
-            updated[updated.length - 1] = {
-              ...last,
-              content: "Sorry, something went wrong. Please try again.",
-              streaming: false,
-            };
-          }
-          messagesRef.current = updated;
-          persistDraft({
-            sessionId,
-            currentSession: currentSessionRef.current,
-            messages: updated,
-            input: inputRefState.current,
+          const updatedConversation = updateConversationMessage(conversationRef.current, assistantClientId, (assistantMessage) => ({
+            ...assistantMessage,
+            content: assistantMessage.content || "Sorry, something went wrong. Please try again.",
+            streaming: false,
+          }));
+          conversationRef.current = updatedConversation;
+          setConversation(updatedConversation);
+          persistCurrentState({
+            conversation: updatedConversation,
             streaming: false,
             summarizing: false,
-            tokenCount: tokenCountRef.current,
-            maxTokens: maxTokensRef.current,
             error: err,
           });
-          setMessages(updated);
         },
-        sessionId,
-        controller.signal,
+        {
+          sessionId: activeSessionId,
+          signal: controller.signal,
+          history,
+          persistUserMessage,
+          ...(persistUserMessage
+            ? {
+                userMessageMetadata: {
+                  client_id: assistantParentClientId,
+                  parent_client_id: userParentClientId ?? null,
+                },
+              }
+            : {}),
+          assistantMessageMetadata: {
+            client_id: assistantClientId,
+            parent_client_id: assistantParentClientId,
+          },
+        }
       );
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Stream failed";
-      errorRef.current = message;
+      const messageText = e instanceof Error ? e.message : "Stream failed";
+      errorRef.current = messageText;
       streamingRef.current = false;
-      setError(message);
+      setError(messageText);
       setStreaming(false);
-      persistDraft({
-        sessionId,
-        currentSession: currentSessionRef.current,
-        messages: messagesRef.current,
-        input: inputRefState.current,
+      persistCurrentState({
         streaming: false,
         summarizing: false,
-        tokenCount: tokenCountRef.current,
-        maxTokens: maxTokensRef.current,
-        error: message,
+        error: messageText,
       });
     }
+  }, [persistCurrentState]);
+
+  const handleSend = async (text?: string) => {
+    const msg = (text ?? input).trim();
+    if (!msg || streaming || summarizing || !sessionId) return;
+
+    const currentConversation = conversationRef.current;
+    const parentClientId = getActiveLeafClientId(currentConversation);
+    const userClientId = createClientId("user");
+    const assistantClientId = createClientId("assistant");
+    const history = getVisibleMessages(currentConversation).map((item) => ({
+      role: item.role,
+      content: item.content,
+    }));
+
+    let nextConversation = upsertConversationMessage(currentConversation, {
+      clientId: userClientId,
+      role: "user",
+      content: msg,
+      parentClientId,
+      streaming: false,
+    });
+    nextConversation = upsertConversationMessage(nextConversation, {
+      clientId: assistantClientId,
+      role: "assistant",
+      content: "",
+      parentClientId: userClientId,
+      streaming: true,
+    });
+
+    if (inputRef.current) inputRef.current.style.height = "auto";
+
+    await streamAssistantReply({
+      message: msg,
+      history,
+      nextConversation,
+      assistantClientId,
+      persistUserMessage: true,
+      inputValue: "",
+      userParentClientId: parentClientId,
+      assistantParentClientId: userClientId,
+    });
   };
 
   const handleStop = () => {
@@ -745,23 +1047,20 @@ export default function ChatPage() {
     abortRef.current = null;
     streamingRef.current = false;
     setStreaming(false);
-    const updated = [...messagesRef.current];
-    const last = updated[updated.length - 1];
-    if (last?.streaming) {
-      updated[updated.length - 1] = { ...last, streaming: false };
-    }
-    messagesRef.current = updated;
-    setMessages(updated);
-    if (sessionId) {
-      persistDraft({
-        sessionId,
-        currentSession: currentSessionRef.current,
-        messages: updated,
-        input: inputRefState.current,
+    const activeStreamingId = (Object.values(conversationRef.current.nodes) as Message[]).find(
+      (message) => message.streaming,
+    )?.clientId;
+    if (activeStreamingId) {
+      const updatedConversation = updateConversationMessage(conversationRef.current, activeStreamingId, (message) => ({
+        ...message,
+        streaming: false,
+      }));
+      conversationRef.current = updatedConversation;
+      setConversation(updatedConversation);
+      persistCurrentState({
+        conversation: updatedConversation,
         streaming: false,
         summarizing: false,
-        tokenCount: tokenCountRef.current,
-        maxTokens: maxTokensRef.current,
         error: errorRef.current,
       });
     }
@@ -785,20 +1084,21 @@ export default function ChatPage() {
     errorRef.current = "";
 
     // Add placeholder summarizing message
-    const placeholderMsg: Message = { role: "assistant", content: "", streaming: true };
-    const updatedWithPlaceholder = [...messagesRef.current, placeholderMsg];
-    messagesRef.current = updatedWithPlaceholder;
+    const placeholderClientId = createClientId("summary");
+    const updatedWithPlaceholder = upsertConversationMessage(conversationRef.current, {
+      clientId: placeholderClientId,
+      role: "assistant",
+      content: "",
+      parentClientId: getActiveLeafClientId(conversationRef.current),
+      streaming: true,
+    });
+    conversationRef.current = updatedWithPlaceholder;
     summarizingRef.current = true;
-    setMessages(updatedWithPlaceholder);
-    persistDraft({
-      sessionId,
-      currentSession: currentSessionRef.current,
-      messages: updatedWithPlaceholder,
-      input: inputRefState.current,
+    setConversation(updatedWithPlaceholder);
+    persistCurrentState({
+      conversation: updatedWithPlaceholder,
       streaming: false,
       summarizing: true,
-      tokenCount: tokenCountRef.current,
-      maxTokens: maxTokensRef.current,
       error: "",
     });
 
@@ -827,19 +1127,13 @@ export default function ChatPage() {
               setMaxTokens(sess.max_tokens);
               setCurrentSession(sess);
             }
-            const restoredMessages = history.map((m) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            }));
-            messagesRef.current = restoredMessages;
+            const restoredConversation = buildConversationFromHistory(history);
+            conversationRef.current = restoredConversation;
             summarizingRef.current = false;
-            setMessages(restoredMessages);
-            persistDraft({
-              sessionId,
+            setConversation(restoredConversation);
+            persistCurrentState({
               currentSession: sess,
-              messages: restoredMessages,
-              input: inputRefState.current,
+              conversation: restoredConversation,
               streaming: false,
               summarizing: false,
               tokenCount: sess?.token_count ?? tokenCountRef.current,
@@ -849,9 +1143,9 @@ export default function ChatPage() {
             emitAppEvent(CHAT_SESSIONS_CHANGED_EVENT);
           } catch {
             // Remove placeholder on failure
-            const restored = messagesRef.current.filter((m) => !m.streaming);
-            messagesRef.current = restored;
-            setMessages(restored);
+            const restoredConversation = removeConversationMessage(conversationRef.current, placeholderClientId);
+            conversationRef.current = restoredConversation;
+            setConversation(restoredConversation);
           }
           setSummarizing(false);
         },
@@ -860,20 +1154,15 @@ export default function ChatPage() {
           summarizingRef.current = false;
           setError(err);
           setSummarizing(false);
-          const updated = messagesRef.current.filter((m) => !m.streaming);
-          messagesRef.current = updated;
-          persistDraft({
-            sessionId,
-            currentSession: currentSessionRef.current,
-            messages: updated,
-            input: inputRefState.current,
+          const updatedConversation = removeConversationMessage(conversationRef.current, placeholderClientId);
+          conversationRef.current = updatedConversation;
+          persistCurrentState({
+            conversation: updatedConversation,
             streaming: false,
             summarizing: false,
-            tokenCount: tokenCountRef.current,
-            maxTokens: maxTokensRef.current,
             error: err,
           });
-          setMessages(updated);
+          setConversation(updatedConversation);
         },
         controller.signal,
       );
@@ -883,24 +1172,140 @@ export default function ChatPage() {
       summarizingRef.current = false;
       setError(message);
       setSummarizing(false);
-      const updated = messagesRef.current.filter((m) => !m.streaming);
-      messagesRef.current = updated;
-      setMessages(updated);
-      persistDraft({
-        sessionId,
-        currentSession: currentSessionRef.current,
-        messages: updated,
-        input: inputRefState.current,
+      const updatedConversation = removeConversationMessage(conversationRef.current, placeholderClientId);
+      conversationRef.current = updatedConversation;
+      setConversation(updatedConversation);
+      persistCurrentState({
+        conversation: updatedConversation,
         streaming: false,
         summarizing: false,
-        tokenCount: tokenCountRef.current,
-        maxTokens: maxTokensRef.current,
         error: message,
       });
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleCopyAssistantMessage = async (message: Message) => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedMessageId(message.clientId);
+      window.setTimeout(() => {
+        setCopiedMessageId((current: string | null) => (current === message.clientId ? null : current));
+      }, 1500);
+    } catch {
+      setError("Failed to copy message to clipboard.");
+    }
+  };
+
+  const handleRetryAssistantMessage = async (message: Message) => {
+    if (streaming || summarizing || !sessionId) return;
+    const parentMessage = message.parentClientId ? conversationRef.current.nodes[message.parentClientId] : null;
+    if (!parentMessage || parentMessage.role !== "user") return;
+
+    const visibleMessages = getVisibleMessages(conversationRef.current);
+    const parentIndex = visibleMessages.findIndex((item) => item.clientId === parentMessage.clientId);
+    if (parentIndex === -1) return;
+
+    const assistantClientId = createClientId("assistant");
+    const history = visibleMessages.slice(0, parentIndex).map((item) => ({ role: item.role, content: item.content }));
+    const nextConversation = upsertConversationMessage(conversationRef.current, {
+      clientId: assistantClientId,
+      role: "assistant",
+      content: "",
+      parentClientId: parentMessage.clientId,
+      streaming: true,
+    });
+
+    await streamAssistantReply({
+      message: parentMessage.content,
+      history,
+      nextConversation,
+      assistantClientId,
+      persistUserMessage: false,
+      inputValue: inputRefState.current,
+      assistantParentClientId: parentMessage.clientId,
+    });
+  };
+
+  const handleStartEditingMessage = (message: Message) => {
+    setEditingMessageId(message.clientId);
+    setEditingContent(message.content);
+  };
+
+  const handleCancelEditingMessage = () => {
+    setEditingMessageId(null);
+    setEditingContent("");
+  };
+
+  const handleSaveEditedMessage = async () => {
+    if (!editingMessageId || streaming || summarizing || !sessionId) return;
+    const nextContent = editingContent.trim();
+    if (!nextContent) return;
+
+    const targetMessage = conversationRef.current.nodes[editingMessageId];
+    if (!targetMessage || targetMessage.role !== "user") return;
+
+    const visibleMessages = getVisibleMessages(conversationRef.current);
+    const targetIndex = visibleMessages.findIndex((item) => item.clientId === editingMessageId);
+    if (targetIndex === -1) return;
+
+    const userClientId = createClientId("user");
+    const assistantClientId = createClientId("assistant");
+    const history = visibleMessages.slice(0, targetIndex).map((item) => ({ role: item.role, content: item.content }));
+
+    let nextConversation = upsertConversationMessage(conversationRef.current, {
+      clientId: userClientId,
+      role: "user",
+      content: nextContent,
+      parentClientId: targetMessage.parentClientId,
+      streaming: false,
+    });
+    nextConversation = upsertConversationMessage(nextConversation, {
+      clientId: assistantClientId,
+      role: "assistant",
+      content: "",
+      parentClientId: userClientId,
+      streaming: true,
+    });
+
+    setEditingMessageId(null);
+    setEditingContent("");
+
+    await streamAssistantReply({
+      message: nextContent,
+      history,
+      nextConversation,
+      assistantClientId,
+      persistUserMessage: true,
+      inputValue: inputRefState.current,
+      userParentClientId: targetMessage.parentClientId,
+      assistantParentClientId: userClientId,
+    });
+  };
+
+  const handleNavigateSiblings = (message: Message, direction: -1 | 1) => {
+    const siblingIds = getSiblings(conversationRef.current, message.clientId);
+    if (siblingIds.length <= 1) return;
+    const currentIndex = siblingIds.indexOf(message.clientId);
+    if (currentIndex === -1) return;
+
+    const nextIndex = (currentIndex + direction + siblingIds.length) % siblingIds.length;
+    const parentKey = getParentKey(message.parentClientId);
+    const nextConversation = cloneConversation(conversationRef.current);
+    nextConversation.selectedChildByParent[parentKey] = siblingIds[nextIndex];
+    conversationRef.current = nextConversation;
+    setConversation(nextConversation);
+
+    if (editingMessageId === message.clientId) {
+      setEditingMessageId(null);
+      setEditingContent("");
+    }
+
+    persistCurrentState({
+      conversation: nextConversation,
+    });
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -909,7 +1314,7 @@ export default function ChatPage() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full min-h-0 items-center justify-center px-4 py-6 md:px-6">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
@@ -918,168 +1323,252 @@ export default function ChatPage() {
   const sessionTitle = currentSession?.title ?? "AI Chat";
 
   return (
-    <div className="flex h-[calc(100dvh-9rem)] md:h-[calc(100vh-7rem)] flex-col">
-      {/* Header */}
-      <div className="mb-3 flex items-center justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold truncate">{sessionTitle}</h1>
-          <p className="text-sm text-muted-foreground">
-            Ask questions about your job applications
-          </p>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 px-4 pb-3 pt-4 md:px-6 md:pt-6">
+        {/* Header */}
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-bold">{sessionTitle}</h1>
+            <p className="text-sm text-muted-foreground">
+              Ask questions about your job applications
+            </p>
+          </div>
+          <button
+            onClick={handleNewChat}
+            disabled={isEmptySession}
+            className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + New Chat
+          </button>
         </div>
-        <button
-          onClick={handleNewChat}
-          disabled={isEmptySession}
-          className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-        >
-          + New Chat
-        </button>
+
+        {/* Context bar — only show once we have a session with messages */}
+        {sessionId && (messages.length > 0 || tokenCount > 0 || input.trim().length > 0) && (
+          <ContextBar
+            tokenCount={liveTokenCount}
+            maxTokens={maxTokens}
+            onSummarize={handleSummarize}
+            summarizing={summarizing}
+          />
+        )}
       </div>
 
-      {/* Context bar — only show once we have a session with messages */}
-      {sessionId && (messages.length > 0 || tokenCount > 0 || input.trim().length > 0) && (
-        <ContextBar
-          tokenCount={liveTokenCount}
-          maxTokens={maxTokens}
-          onSummarize={handleSummarize}
-          summarizing={summarizing}
-        />
-      )}
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto rounded-lg border border-border bg-card p-4">
-        {messages.length === 0 && !summarizing ? (
-          <div className="flex h-full flex-col items-center justify-center gap-6">
-            <div className="text-center">
-              <div className="mb-2 text-4xl">💬</div>
-              <h2 className="text-lg font-semibold">Start a conversation</h2>
-              <p className="text-sm text-muted-foreground">
-                Ask anything about your job applications
-              </p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  onClick={() => handleSend(suggestion)}
-                  className="rounded-lg border border-border bg-secondary px-4 py-2 text-left text-sm hover:bg-accent transition-colors"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {summarizing && messages.every((m) => !m.streaming) && (
-              <div className="flex justify-center py-4">
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/50 px-4 py-2 text-sm text-muted-foreground">
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Summarizing conversation…
+      <div className="min-h-0 flex-1 px-4 pb-4 md:px-6 md:pb-6">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          {/* Messages */}
+          <div
+            ref={messagesContainerRef}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+          >
+            {messages.length === 0 && !summarizing ? (
+              <div className="flex h-full flex-col items-center justify-center gap-6">
+                <div className="text-center">
+                  <div className="mb-2 text-4xl">💬</div>
+                  <h2 className="text-lg font-semibold">Start a conversation</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Ask anything about your job applications
+                  </p>
                 </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => handleSend(suggestion)}
+                      className="rounded-lg border border-border bg-secondary px-4 py-2 text-left text-sm transition-colors hover:bg-accent"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {summarizing && messages.every((m: Message) => !m.streaming) && (
+                  <div className="flex justify-center py-4">
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/50 px-4 py-2 text-sm text-muted-foreground">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                      Summarizing conversation…
+                    </div>
+                  </div>
+                )}
+                {messages.map((msg: Message) => {
+                  const siblingIds = getSiblings(conversation, msg.clientId);
+                  const siblingIndex = siblingIds.indexOf(msg.clientId);
+                  const isEditing = editingMessageId === msg.clientId;
+
+                  return (
+                    <div
+                      key={msg.clientId}
+                      className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
+                    >
+                      <div
+                        className={cn(
+                          "max-w-[85%] rounded-2xl px-4 py-2.5 sm:max-w-[80%]",
+                          msg.role === "user"
+                            ? "bg-primary text-sm text-primary-foreground"
+                            : "bg-secondary text-foreground"
+                        )}
+                      >
+                        {msg.role === "assistant" ? (
+                          msg.content ? (
+                            <>
+                              <Markdown content={msg.content} />
+                              {msg.streaming && (
+                                <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-current" />
+                              )}
+                            </>
+                          ) : (
+                            <span className="flex gap-1 px-1 py-1">
+                              <span className="animate-bounce text-lg leading-none">·</span>
+                              <span className="animate-bounce text-lg leading-none [animation-delay:0.1s]">·</span>
+                              <span className="animate-bounce text-lg leading-none [animation-delay:0.2s]">·</span>
+                            </span>
+                          )
+                        ) : isEditing ? (
+                          <div className="space-y-3">
+                            <textarea
+                              value={editingContent}
+                              onChange={(e) => setEditingContent(e.target.value)}
+                              rows={3}
+                              className="w-full resize-y rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-primary-foreground placeholder:text-primary-foreground/70 focus:outline-none focus:ring-2 focus:ring-white/40"
+                            />
+                            <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                              <button
+                                onClick={handleCancelEditingMessage}
+                                className="rounded-md border border-white/25 px-2.5 py-1 text-primary-foreground/90 transition-colors hover:bg-white/10"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={handleSaveEditedMessage}
+                                disabled={!editingContent.trim() || streaming || summarizing}
+                                className="rounded-md bg-white/15 px-2.5 py-1 font-medium text-primary-foreground transition-colors hover:bg-white/20 disabled:opacity-50"
+                              >
+                                Save & restart
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-sm">{msg.content}</span>
+                        )}
+
+                        {!msg.streaming && (
+                          <div className={cn("mt-3 flex flex-wrap items-center gap-2 text-xs", msg.role === "user" ? "text-primary-foreground/85" : "text-muted-foreground")}>
+                            {msg.role === "assistant" && msg.content && (
+                              <>
+                                <button
+                                  onClick={() => handleCopyAssistantMessage(msg)}
+                                  className="rounded-md border border-current/20 px-2 py-1 transition-colors hover:bg-black/5"
+                                >
+                                  {copiedMessageId === msg.clientId ? "Copied" : "Copy"}
+                                </button>
+                                <button
+                                  onClick={() => handleRetryAssistantMessage(msg)}
+                                  disabled={streaming || summarizing}
+                                  className="rounded-md border border-current/20 px-2 py-1 transition-colors hover:bg-black/5 disabled:opacity-50"
+                                >
+                                  Try again
+                                </button>
+                              </>
+                            )}
+
+                            {msg.role === "user" && !isEditing && (
+                              <button
+                                onClick={() => handleStartEditingMessage(msg)}
+                                disabled={streaming || summarizing}
+                                className="rounded-md border border-current/20 px-2 py-1 transition-colors hover:bg-white/10 disabled:opacity-50"
+                              >
+                                Edit
+                              </button>
+                            )}
+
+                            {siblingIds.length > 1 && (
+                              <div className="ml-auto inline-flex items-center gap-1 rounded-full border border-current/20 px-1 py-1">
+                                <button
+                                  onClick={() => handleNavigateSiblings(msg, -1)}
+                                  className="rounded-full px-2 py-0.5 transition-colors hover:bg-black/5"
+                                  aria-label="Previous branch"
+                                >
+                                  &lt;
+                                </button>
+                                <span className="min-w-[3rem] text-center tabular-nums">
+                                  {siblingIndex + 1}/{siblingIds.length}
+                                </span>
+                                <button
+                                  onClick={() => handleNavigateSiblings(msg, 1)}
+                                  className="rounded-full px-2 py-0.5 transition-colors hover:bg-black/5"
+                                  aria-label="Next branch"
+                                >
+                                  &gt;
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
-              >
-                <div
-                  className={cn(
-                    "max-w-[80%] rounded-2xl px-4 py-2.5",
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground text-sm"
-                      : "bg-secondary text-foreground"
-                  )}
-                >
-                  {msg.role === "assistant" ? (
-                    msg.content ? (
-                      <>
-                        <Markdown content={msg.content} />
-                        {msg.streaming && (
-                          <span className="inline-block h-4 w-0.5 animate-pulse bg-current ml-0.5" />
-                        )}
-                      </>
-                    ) : (
-                      <span className="flex gap-1 px-1 py-1">
-                        <span className="animate-bounce text-lg leading-none">·</span>
-                        <span className="animate-bounce text-lg leading-none [animation-delay:0.1s]">·</span>
-                        <span className="animate-bounce text-lg leading-none [animation-delay:0.2s]">·</span>
-                      </span>
-                    )
-                  ) : (
-                    <span className="text-sm">{msg.content}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-            <div ref={bottomRef} />
           </div>
-        )}
-      </div>
 
-      {/* Error */}
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          <div className="shrink-0 border-t border-border bg-background/95 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur sm:px-4">
+            {/* Error */}
+            {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
 
-      {/* Loading phrase */}
-      {streaming && loadingPhrase && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="italic">{loadingPhrase}</span>
+            {/* Loading phrase */}
+            {streaming && loadingPhrase && (
+              <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="italic">{loadingPhrase}</span>
+              </div>
+            )}
+
+            {/* Input */}
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  inputRefState.current = next;
+                  setInput(next);
+                  if (sessionId) {
+                    persistCurrentState({ input: next });
+                  }
+                  adjustHeight();
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask about your applications… (Shift+Enter for newline)"
+                disabled={streaming || summarizing || !sessionId}
+                rows={1}
+                style={{ maxHeight: "180px" }}
+                className="flex-1 resize-none overflow-y-auto rounded-xl border border-border bg-input px-4 py-3 text-sm leading-relaxed placeholder:text-muted-foreground transition-[height] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+              />
+              {streaming ? (
+                <button
+                  onClick={handleStop}
+                  title="Stop generation"
+                  className="flex shrink-0 items-center gap-1.5 rounded-xl bg-secondary px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSend()}
+                  disabled={!input.trim() || summarizing || !sessionId}
+                  className="shrink-0 rounded-xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                  Send
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-      )}
-
-      {/* Input */}
-      <div className="mt-2 flex items-end gap-2">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => {
-            const next = e.target.value;
-            inputRefState.current = next;
-            setInput(next);
-            if (sessionId) {
-              persistDraft({
-                sessionId,
-                currentSession: currentSessionRef.current,
-                messages: messagesRef.current,
-                input: next,
-                streaming: streamingRef.current,
-                summarizing: summarizingRef.current,
-                tokenCount: tokenCountRef.current,
-                maxTokens: maxTokensRef.current,
-                error: errorRef.current,
-              });
-            }
-            adjustHeight();
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about your applications… (Shift+Enter for newline)"
-          disabled={streaming || summarizing || !sessionId}
-          rows={1}
-          style={{ maxHeight: "180px" }}
-          className="flex-1 resize-none overflow-y-auto rounded-xl border border-border bg-input px-4 py-3 text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 transition-[height]"
-        />
-        {streaming ? (
-          <button
-            onClick={handleStop}
-            title="Stop generation"
-            className="shrink-0 rounded-xl bg-secondary px-4 py-3 text-sm font-medium text-foreground hover:bg-accent transition-colors flex items-center gap-1.5"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="6" y="6" width="12" height="12" rx="1" />
-            </svg>
-            Stop
-          </button>
-        ) : (
-          <button
-            onClick={() => handleSend()}
-            disabled={!input.trim() || summarizing || !sessionId}
-            className="shrink-0 rounded-xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            Send
-          </button>
-        )}
       </div>
     </div>
   );

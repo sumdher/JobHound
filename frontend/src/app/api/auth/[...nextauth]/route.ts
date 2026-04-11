@@ -69,8 +69,9 @@ const handler = NextAuth({
             headers: { Authorization: `Bearer ${String(token.accessToken)}` },
           });
           if (res.ok) {
-            const data = (await res.json()) as { status: string };
+            const data = (await res.json()) as { status: string; is_admin?: boolean };
             token.userStatus = data.status;
+            token.isAdmin = data.is_admin ?? false;
           }
         } catch {
           // Non-critical — keep existing token as-is
