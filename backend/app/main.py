@@ -9,16 +9,27 @@ from collections.abc import AsyncGenerator
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import settings
+from app.database import engine
 from app.models import chat_session, cv_analysis  # noqa: F401
 
 logger = structlog.get_logger(__name__)
 
 
+async def _ensure_runtime_schema_compatibility() -> None:
+    """Patch forward-compatible columns that hot-reloaded code may expect."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE cv_analyses ADD COLUMN IF NOT EXISTS job_description TEXT")
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown logic."""
+    await _ensure_runtime_schema_compatibility()
     logger.info("JobHound backend starting up", llm_provider=settings.llm_provider)
     yield
     logger.info("JobHound backend shutting down")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,15 +51,73 @@ class AnalyzeRequest(BaseModel):
 
 
 class AnalysisCreateRequest(BaseModel):
-    title: str
+    title: str | None = None
+    job_description: str | None = None
     content: str
 
 
 class AnalysisOut(BaseModel):
     id: str
     title: str
+    job_description: str | None = None
     content: str
     created_at: str
+
+
+def _normalized_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[*#\-•\s]+", "", line).strip()
+        line = re.sub(r"^\**\s*", "", line).strip()
+        lines.append(line)
+    return lines
+
+
+def _trim_title(text: str, fallback: str = "Saved Analysis") -> str:
+    stripped = " ".join(text.strip().split())
+    if not stripped:
+        return fallback
+    if len(stripped) <= 60:
+        return stripped
+    truncated = stripped[:60]
+    last_space = truncated.rfind(" ")
+    return (truncated[:last_space] if last_space > 20 else truncated) + "..."
+
+
+def _extract_labeled_value(lines: list[str], labels: tuple[str, ...]) -> str | None:
+    for line in lines:
+        lowered = line.lower()
+        for label in labels:
+            prefix = f"{label}:"
+            if lowered.startswith(prefix):
+                value = line[len(prefix):].strip()
+                if value:
+                    return value
+    return None
+
+
+def _title_from_text(
+    text: str,
+    *,
+    title_hint: str | None = None,
+    fallback: str = "Saved Analysis",
+) -> str:
+    lines = _normalized_lines(text)
+    role = _extract_labeled_value(lines, ("job title", "title", "role", "position"))
+    company = _extract_labeled_value(lines, ("company", "organization", "employer"))
+    if role and company:
+        return _trim_title(f"{role} at {company}", fallback=fallback)
+    if role:
+        return _trim_title(role, fallback=fallback)
+    if title_hint:
+        return _trim_title(title_hint, fallback=fallback)
+    if lines:
+        first_line = re.sub(r"^(job title|title|role|position):\s*", "", lines[0], flags=re.IGNORECASE)
+        return _trim_title(first_line, fallback=fallback)
+    return fallback
 
 
 @router.get("")
@@ -243,11 +302,40 @@ async def list_cv_analyses(
         AnalysisOut(
             id=str(a.id),
             title=a.title,
+            job_description=a.job_description,
             content=a.content,
             created_at=a.created_at.isoformat(),
         )
         for a in analyses
     ]
+
+
+@router.get("/analyses/{analysis_id}", response_model=AnalysisOut)
+async def get_cv_analysis(
+    analysis_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AnalysisOut:
+    try:
+        aid = uuid.UUID(analysis_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid analysis_id format.")
+    result = await db.execute(
+        select(CvAnalysis).where(
+            CvAnalysis.id == aid,
+            CvAnalysis.user_id == current_user.id,
+        )
+    )
+    analysis = result.scalar_one_or_none()
+    if analysis is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis not found.")
+    return AnalysisOut(
+        id=str(analysis.id),
+        title=analysis.title,
+        job_description=analysis.job_description,
+        content=analysis.content,
+        created_at=analysis.created_at.isoformat(),
+    )
 
 
 @router.post("/analyses", response_model=AnalysisOut, status_code=status.HTTP_201_CREATED)
@@ -256,9 +344,11 @@ async def create_cv_analysis(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisOut:
+    title = _title_from_text(body.job_description or body.title or body.content, title_hint=body.title)
     analysis = CvAnalysis(
         user_id=current_user.id,
-        title=body.title.strip(),
+        title=title,
+        job_description=body.job_description.strip() if body.job_description else None,
         content=body.content,
     )
     db.add(analysis)
@@ -267,6 +357,7 @@ async def create_cv_analysis(
     return AnalysisOut(
         id=str(analysis.id),
         title=analysis.title,
+        job_description=analysis.job_description,
         content=analysis.content,
         created_at=analysis.created_at.isoformat(),
     )
