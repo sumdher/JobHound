@@ -3,6 +3,7 @@
 # added by sudheer
 .secrets_pette
 .commands
+deploy/cloudflared/config.yaml
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
@@ -122,6 +123,17 @@ dist
 .env.*.local
 *.env
 
+# Explicit runtime-only secret/config files kept out of git
+backend/.env
+backend/.env.local
+frontend/.env
+frontend/.env.local
+frontend/.env.production.local
+frontend/.env.development.local
+deploy/cloudflared/config.yml
+deploy/cloudflared/credentials.json
+deploy/cloudflared/*.pem
+
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
@@ -133,3 +145,4 @@ Thumbs.db
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 docker-compose.override.yml
+deploy/cloudflared/credentials.json

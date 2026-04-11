@@ -19,7 +19,7 @@ import {
   type ApplicationFilters,
   type ExportFilters,
 } from "@/lib/api";
-import { cn, formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
+import { formatDate, STATUS_LABELS } from "@/lib/utils";
 
 const PAGE_SIZE = 20;
 

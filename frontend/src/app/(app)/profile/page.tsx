@@ -588,9 +588,9 @@ export default function ProfilePage() {
 
         {/* Show minimal fallback if no PDF and text is hidden */}
         {!showCvText && !cvFilename && !cvLoading && (
-          <div className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground/70 italic text-center">
-            No CV saved yet — upload a PDF or click "Show extracted text" to paste manually.
-          </div>
+            <div className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground/70 italic text-center">
+              No CV saved yet — upload a PDF or click &ldquo;Show extracted text&rdquo; to paste manually.
+            </div>
         )}
 
         {cvError && <p className="text-xs text-destructive">{cvError}</p>}
