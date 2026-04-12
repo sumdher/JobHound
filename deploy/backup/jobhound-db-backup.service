@@ -1,0 +1,19 @@
+[Unit]
+Description=JobHound PostgreSQL backup
+Documentation=https://github.com/sumdher/jobhound
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/jobhound
+ExecStart=/usr/bin/env bash /opt/jobhound/deploy/backup/jobhound-db-backup.sh
+
+# Optional overrides for non-default deployments can be added here or via a drop-in:
+# Environment=JOBHOUND_BACKUP_DIR=/var/backups/jobhound
+# Environment=JOBHOUND_BACKUP_RETENTION_DAYS=14
+# Environment=JOBHOUND_BACKUP_COMPOSE_FILE=/opt/jobhound/docker-compose.prod.yml
+# Environment=JOBHOUND_BACKUP_PROJECT_DIR=/opt/jobhound
+# Environment=JOBHOUND_BACKUP_SERVICE_NAME=db

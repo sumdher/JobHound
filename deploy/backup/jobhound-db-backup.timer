@@ -1,0 +1,11 @@
+[Unit]
+Description=Run JobHound PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=jobhound-db-backup.service
+
+[Install]
+WantedBy=timers.target
