@@ -277,7 +277,7 @@ function normalizeDraft(raw: string): ChatDraft | null {
       streaming: parsed.streaming ?? false,
       summarizing: parsed.summarizing ?? false,
       tokenCount: parsed.tokenCount ?? 0,
-      maxTokens: parsed.maxTokens ?? 8192,
+      maxTokens: parsed.maxTokens ?? 0,
       error: parsed.error ?? "",
     };
   } catch {
@@ -348,25 +348,6 @@ const LOADING_PHRASES = [
   "Proof by computation in progress...",
   "Finding signal in polite noise...",
 ];
-
-// Context window sizes by model keyword
-function getContextWindowTokens(): number {
-  if (typeof window === "undefined") return 8192;
-  try {
-    const raw = localStorage.getItem("jobhound_llm_config");
-    if (!raw) return 8192;
-    const config = JSON.parse(raw) as { model?: string };
-    const model = (config.model ?? "").toLowerCase();
-    if (model.includes("gpt-4o")) return 128_000;
-    if (model.includes("gpt-4")) return 128_000;
-    if (model.includes("claude")) return 200_000;
-    if (model.includes("llama3") || model.includes("llama-3")) return 8_192;
-    if (model.includes("gemma")) return 8_192;
-    return 8_192;
-  } catch {
-    return 8_192;
-  }
-}
 
 function getLiveContextTokenCount(
   persistedTokenCount: number,
@@ -573,6 +554,7 @@ function ContextBar({
   else if (pct >= 60) { barColor = "bg-yellow-500"; textColor = "text-yellow-400"; }
 
   const formatK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+  const hasConfiguredWindow = maxTokens > 0;
 
   return (
     <div className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
@@ -585,7 +567,9 @@ function ContextBar({
         </div>
       </div>
       <span className={cn("shrink-0 text-xs font-medium tabular-nums", textColor)}>
-        ~{formatK(tokenCount)} / {formatK(maxTokens)} tokens
+        {hasConfiguredWindow
+          ? `~${formatK(tokenCount)} / ${formatK(maxTokens)} configured tokens`
+          : `~${formatK(tokenCount)} tokens tracked`}
       </span>
       {pct >= 80 && (
         <button
@@ -617,7 +601,7 @@ export default function ChatPage() {
   const [loadingPhrase, setLoadingPhrase] = useState("");
   const [error, setError] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
-  const [maxTokens, setMaxTokens] = useState(8192);
+  const [maxTokens, setMaxTokens] = useState(0);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -757,8 +741,9 @@ export default function ChatPage() {
           setCurrentSession(sess);
           setSessionId(sessionIdParam);
 
-          const ctxTokens = getContextWindowTokens();
-          setMaxTokens(sess?.max_tokens ?? ctxTokens);
+          const resolvedMaxTokens = sess?.max_tokens ?? 0;
+          maxTokensRef.current = resolvedMaxTokens;
+          setMaxTokens(resolvedMaxTokens);
           setTokenCount(sess?.token_count ?? 0);
 
           if (!draft?.streaming && !draft?.summarizing) {
@@ -926,12 +911,19 @@ export default function ChatPage() {
         async (meta) => {
           tokenCountRef.current = meta.token_count;
           setTokenCount(meta.token_count);
+          if (typeof meta.max_tokens === "number") {
+            maxTokensRef.current = meta.max_tokens;
+            setMaxTokens(meta.max_tokens);
+          }
           try {
             const sessions = await listChatSessions();
             const sess = sessions.find((item) => item.id === meta.session_id) ?? null;
             currentSessionRef.current = sess;
             setCurrentSession(sess);
-            if (sess?.max_tokens) {
+            if (typeof meta.max_tokens === "number") {
+              maxTokensRef.current = meta.max_tokens;
+              setMaxTokens(meta.max_tokens);
+            } else if (sess?.max_tokens) {
               maxTokensRef.current = sess.max_tokens;
               setMaxTokens(sess.max_tokens);
             }
@@ -939,7 +931,7 @@ export default function ChatPage() {
             persistCurrentState({
               currentSession: sess,
               tokenCount: meta.token_count,
-              maxTokens: sess?.max_tokens ?? maxTokensRef.current,
+              maxTokens: meta.max_tokens ?? sess?.max_tokens ?? maxTokensRef.current,
               streaming: false,
               summarizing: false,
               error: "",
