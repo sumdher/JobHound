@@ -1,4 +1,4 @@
-# JobHound 🐾
+# JobHound
 
 > AI-powered job application tracker with natural language input, RAG chat, and rich analytics.
 

@@ -1,6 +1,7 @@
 /**
  * Next.js configuration for JobHound frontend.
  * Enables standalone output for Docker production builds.
+ * 
  */
 
 /** @type {import('next').NextConfig} */
