@@ -14,6 +14,35 @@ logger = structlog.get_logger(__name__)
 RESEND_API_URL = "https://api.resend.com/emails"
 
 
+class EmailDeliveryError(RuntimeError):
+    """Raised when an approval request email cannot be delivered."""
+
+
+def _api_key_suffix(api_key: str | None) -> str | None:
+    """Return only the final characters of an API key for safe logging."""
+    if not api_key:
+        return None
+    return api_key[-4:] if len(api_key) >= 4 else api_key
+
+
+def _email_log_context(from_addr: str | None = None) -> dict[str, str | bool | None]:
+    """Return email-related runtime configuration safe for structured logs."""
+    return {
+        "admin_email": settings.admin_email or None,
+        "resend_from_email": from_addr
+        or settings.resend_from_email
+        or "JobHound <onboarding@resend.dev>",
+        "app_url": settings.app_url,
+        "resend_api_key_configured": bool(settings.resend_api_key),
+        "resend_api_key_suffix": _api_key_suffix(settings.resend_api_key),
+    }
+
+
+def log_email_runtime_config() -> None:
+    """Emit safe startup visibility for the active email configuration."""
+    logger.info("Email runtime configuration loaded", **_email_log_context())
+
+
 async def send_approval_request_email(
     user_email: str,
     user_name: str | None,
@@ -22,11 +51,23 @@ async def send_approval_request_email(
 ) -> None:
     """Send a new-user approval request to the admin email."""
     if not settings.admin_email:
-        logger.warning("ADMIN_EMAIL not set — skipping approval request email")
-        return
+        logger.error(
+            "Approval request email misconfigured",
+            reason="admin_email_missing",
+            **_email_log_context(),
+        )
+        raise EmailDeliveryError(
+            "Approval request email is not configured because ADMIN_EMAIL is missing"
+        )
     if not settings.resend_api_key:
-        logger.warning("RESEND_API_KEY not set — skipping approval request email")
-        return
+        logger.error(
+            "Approval request email misconfigured",
+            reason="resend_api_key_missing",
+            **_email_log_context(),
+        )
+        raise EmailDeliveryError(
+            "Approval request email is not configured because RESEND_API_KEY is missing"
+        )
 
     from_addr = settings.resend_from_email or "JobHound <onboarding@resend.dev>"
 
@@ -43,9 +84,44 @@ async def send_approval_request_email(
                 },
             )
             resp.raise_for_status()
-        logger.info("Approval request email sent", to=settings.admin_email)
+        logger.info(
+            "Approval request email sent",
+            to=settings.admin_email,
+            requested_by=user_email,
+            **_email_log_context(from_addr),
+        )
+    except httpx.HTTPStatusError as exc:
+        response_text = exc.response.text.strip() or None
+        logger.error(
+            "Resend rejected approval request email",
+            requested_by=user_email,
+            status_code=exc.response.status_code,
+            response_body=response_text[:2000] if response_text else None,
+            **_email_log_context(from_addr),
+        )
+        raise EmailDeliveryError(
+            f"Resend API returned HTTP {exc.response.status_code} for approval request email"
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.error(
+            "HTTP error while sending approval request email",
+            requested_by=user_email,
+            error=str(exc),
+            **_email_log_context(from_addr),
+        )
+        raise EmailDeliveryError(
+            "HTTP error while sending approval request email"
+        ) from exc
     except Exception as exc:
-        logger.error("Failed to send approval request email", error=str(exc))
+        logger.error(
+            "Unexpected error while sending approval request email",
+            requested_by=user_email,
+            error=str(exc),
+            **_email_log_context(from_addr),
+        )
+        raise EmailDeliveryError(
+            "Unexpected error while sending approval request email"
+        ) from exc
 
 
 def _approval_email_html(

@@ -14,6 +14,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine
 from app.models import chat_session, cv_analysis  # noqa: F401
+from app.services.email import log_email_runtime_config
 
 logger = structlog.get_logger(__name__)
 
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown logic."""
     await _ensure_runtime_schema_compatibility()
     logger.info("JobHound backend starting up", llm_provider=settings.llm_provider)
+    log_email_runtime_config()
     yield
     logger.info("JobHound backend shutting down")
 

@@ -19,7 +19,7 @@ from app.config import settings
 from app.database import get_db
 from app.middleware.auth import create_access_token, get_any_user, get_current_user
 from app.models.user import User
-from app.services.email import send_approval_request_email
+from app.services.email import EmailDeliveryError, send_approval_request_email
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -99,21 +99,36 @@ async def google_auth(
         user.name = id_info.get("name", user.name)
         user.avatar_url = id_info.get("picture", user.avatar_url)
 
-    await db.commit()
-    await db.refresh(user)
-
     # Send approval email to admin for new non-admin pending users
     if is_new_user and user.status == "pending":
         approve_token = create_action_token(user.id, "approve")
         reject_token = create_action_token(user.id, "reject")
         approve_url = f"{settings.app_url}/backend/api/admin/approve?token={approve_token}"
         reject_url = f"{settings.app_url}/backend/api/admin/reject?token={reject_token}"
-        await send_approval_request_email(
-            user_email=user.email,
-            user_name=user.name,
-            approve_url=approve_url,
-            reject_url=reject_url,
-        )
+        try:
+            await send_approval_request_email(
+                user_email=user.email,
+                user_name=user.name,
+                approve_url=approve_url,
+                reject_url=reject_url,
+            )
+        except EmailDeliveryError as exc:
+            await db.rollback()
+            logger.error(
+                "New user signup aborted because approval email failed",
+                email=user.email,
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    "Account could not be created because the approval request email "
+                    "failed to send. Please try again later."
+                ),
+            ) from exc
+
+    await db.commit()
+    await db.refresh(user)
 
     token = create_access_token(user.id, user.email)
 
