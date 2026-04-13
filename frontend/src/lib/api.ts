@@ -26,6 +26,15 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(normalized.length / 4));
 }
 
+function buildChatContextQuery(): string {
+  const llmConfig = getLLMConfig();
+  const params = new URLSearchParams();
+  if (llmConfig.provider) params.set("provider", llmConfig.provider);
+  if (llmConfig.model) params.set("model", llmConfig.model);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 function getLLMConfig(): LLMConfig {
   if (typeof window === "undefined") return {};
   try {
@@ -369,15 +378,15 @@ export interface StreamChatOptions {
 }
 
 export async function listChatSessions(): Promise<ChatSession[]> {
-  return apiFetch<ChatSession[]>("/api/chat/sessions");
+  return apiFetch<ChatSession[]>(`/api/chat/sessions${buildChatContextQuery()}`);
 }
 
 export async function createChatSession(): Promise<ChatSession> {
-  return apiFetch<ChatSession>("/api/chat/sessions", { method: "POST" });
+  return apiFetch<ChatSession>(`/api/chat/sessions${buildChatContextQuery()}`, { method: "POST" });
 }
 
 export async function renameChatSession(id: string, title: string): Promise<ChatSession> {
-  return apiFetch<ChatSession>(`/api/chat/sessions/${id}`, {
+  return apiFetch<ChatSession>(`/api/chat/sessions/${id}${buildChatContextQuery()}`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
@@ -530,7 +539,7 @@ export async function streamChat(
   message: string,
   onToken: (token: string) => void,
   onDone: () => void,
-  onMeta: ((meta: { session_id: string; token_count: number }) => void) | undefined,
+  onMeta: ((meta: { session_id: string; token_count: number; max_tokens?: number }) => void) | undefined,
   onError: (error: string) => void,
   options: StreamChatOptions = {},
 ): Promise<void> {
@@ -591,7 +600,7 @@ export async function streamChat(
             return;
           }
           try {
-            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number } };
+            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number; max_tokens?: number } };
             if (parsed.meta) {
               onMeta?.(parsed.meta);
             } else if (parsed.error) {
@@ -665,7 +674,7 @@ export async function streamSummarize(
             return;
           }
           try {
-            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number } };
+            const parsed = JSON.parse(data) as { token?: string; error?: string; meta?: { session_id: string; token_count: number; max_tokens?: number } };
             if (parsed.meta) {
               // meta event at end of summarize — ignore tokens, just signal done
             } else if (parsed.error) {

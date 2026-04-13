@@ -11,7 +11,7 @@ import json
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
@@ -33,34 +33,55 @@ logger = structlog.get_logger(__name__)
 # Context window registry
 # ---------------------------------------------------------------------------
 
-CONTEXT_WINDOWS: dict[str, int] = {
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "gpt-4-turbo": 128_000,
-    "gpt-4": 8_192,
-    "gpt-3.5-turbo": 16_385,
-    "claude": 200_000,  # matches any claude-* model
-    "llama3.1": 128_000,
-    "llama3.2": 128_000,
-    "llama3": 8_192,
-    "gemma3": 128_000,
-    "gemma2": 8_192,
-    "gemma": 8_192,
-    "mistral": 32_768,
-    "phi3": 128_000,
-    "qwen2.5": 128_000,
-}
-DEFAULT_CONTEXT = 8_192
+CONTEXT_WINDOWS: list[tuple[str | None, str, int]] = [
+    (None, "gpt-4o-mini", 128_000),
+    (None, "gpt-4o", 128_000),
+    (None, "gpt-4-turbo", 128_000),
+    (None, "gpt-4", 8_192),
+    (None, "gpt-3.5-turbo", 16_385),
+    (None, "claude", 200_000),
+    (None, "llama3.2", 128_000),
+    (None, "llama3.1", 128_000),
+    (None, "llama3", 8_192),
+    ("ollama", "gemma4", 4_096),
+    (None, "gemma3", 128_000),
+    (None, "gemma2", 8_192),
+    (None, "gemma", 8_192),
+    (None, "mistral", 32_768),
+    (None, "phi3", 128_000),
+    (None, "qwen2.5", 128_000),
+]
+DEFAULT_CONTEXT = 0
 
 
-def get_max_tokens(model: str | None) -> int:
+def get_max_tokens(model: str | None, provider: str | None = None) -> int:
     if not model:
         return DEFAULT_CONTEXT
+    provider_lower = provider.lower() if provider else None
     ml = model.lower()
-    for key, size in CONTEXT_WINDOWS.items():
-        if key in ml:
+    for provider_key, model_key, size in CONTEXT_WINDOWS:
+        if provider_key and provider_key != provider_lower:
+            continue
+        if model_key in ml:
             return size
     return DEFAULT_CONTEXT
+
+
+def _to_session_out(
+    session: ChatSession,
+    message_count: int,
+    model: str | None,
+    provider: str | None,
+) -> SessionOut:
+    return SessionOut(
+        id=str(session.id),
+        title=session.title,
+        token_count=session.token_count,
+        max_tokens=get_max_tokens(model, provider),
+        created_at=session.created_at.isoformat(),
+        updated_at=session.updated_at.isoformat(),
+        message_count=message_count,
+    )
 
 
 def estimate_tokens(text: str) -> int:
@@ -139,6 +160,8 @@ class RenameRequest(BaseModel):
 
 @router.get("/sessions", response_model=list[SessionOut])
 async def list_sessions(
+    provider: str | None = Query(default=None),
+    model: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[SessionOut]:
@@ -153,22 +176,13 @@ async def list_sessions(
         .order_by(ChatSession.updated_at.desc())
     )
     rows = result.all()
-    return [
-        SessionOut(
-            id=str(session.id),
-            title=session.title,
-            token_count=session.token_count,
-            max_tokens=DEFAULT_CONTEXT,
-            created_at=session.created_at.isoformat(),
-            updated_at=session.updated_at.isoformat(),
-            message_count=count,
-        )
-        for session, count in rows
-    ]
+    return [_to_session_out(session, count, model, provider) for session, count in rows]
 
 
 @router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 async def create_session(
+    provider: str | None = Query(default=None),
+    model: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionOut:
@@ -177,21 +191,15 @@ async def create_session(
         select(func.count(ChatMessage.id)).where(ChatMessage.session_id == session.id)
     )
     message_count = count_result.scalar_one()
-    return SessionOut(
-        id=str(session.id),
-        title=session.title,
-        token_count=session.token_count,
-        max_tokens=DEFAULT_CONTEXT,
-        created_at=session.created_at.isoformat(),
-        updated_at=session.updated_at.isoformat(),
-        message_count=message_count,
-    )
+    return _to_session_out(session, message_count, model, provider)
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionOut)
 async def rename_session(
     session_id: str,
     body: RenameRequest,
+    provider: str | None = Query(default=None),
+    model: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionOut:
@@ -203,15 +211,7 @@ async def rename_session(
         select(func.count(ChatMessage.id)).where(ChatMessage.session_id == session.id)
     )
     message_count = count_result.scalar_one()
-    return SessionOut(
-        id=str(session.id),
-        title=session.title,
-        token_count=session.token_count,
-        max_tokens=DEFAULT_CONTEXT,
-        created_at=session.created_at.isoformat(),
-        updated_at=session.updated_at.isoformat(),
-        message_count=message_count,
-    )
+    return _to_session_out(session, message_count, model, provider)
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -353,7 +353,7 @@ async def summarize_session(
             await db.commit()
             await db.refresh(session)
 
-        yield f"data: {json.dumps({'meta': {'session_id': str(session.id), 'token_count': session.token_count}})}\n\n"
+        yield f"data: {json.dumps({'meta': {'session_id': str(session.id), 'token_count': session.token_count, 'max_tokens': get_max_tokens(body.model, body.provider)}})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -480,7 +480,7 @@ async def chat(
             sess = result2.scalar_one_or_none()
             token_count = sess.token_count if sess else 0
 
-        yield f"data: {json.dumps({'meta': {'session_id': str(session_id), 'token_count': token_count}})}\n\n"
+        yield f"data: {json.dumps({'meta': {'session_id': str(session_id), 'token_count': token_count, 'max_tokens': get_max_tokens(body.model, body.provider)}})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

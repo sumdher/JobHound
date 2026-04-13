@@ -25,7 +25,6 @@ import {
 } from "@/lib/api";
 import {
   CV_ANALYSES_CHANGED_EVENT,
-  PROFILE_ANALYSIS_UPDATED_EVENT,
   emitAppEvent,
 } from "@/lib/app-events";
 import { cn } from "@/lib/utils";
@@ -232,7 +231,6 @@ export default function ProfilePage() {
   const persistDraft = useCallback((draft: ProfileAnalysisDraft) => {
     if (typeof window === "undefined") return;
     window.sessionStorage.setItem(PROFILE_ANALYSIS_STORAGE_KEY, JSON.stringify(draft));
-    emitAppEvent(PROFILE_ANALYSIS_UPDATED_EVENT, draft);
   }, []);
 
   useEffect(() => {
@@ -254,18 +252,7 @@ export default function ProfilePage() {
   // Load CV and saved analyses on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const raw = window.sessionStorage.getItem(PROFILE_ANALYSIS_STORAGE_KEY);
-      if (raw) {
-        try {
-          const draft = JSON.parse(raw) as ProfileAnalysisDraft;
-          setJobDescription(draft.jobDescription);
-          setAnalysis(draft.analysis);
-          setStreaming(draft.streaming);
-          setAnalysisError(draft.error);
-        } catch {
-          window.sessionStorage.removeItem(PROFILE_ANALYSIS_STORAGE_KEY);
-        }
-      }
+      window.sessionStorage.removeItem(PROFILE_ANALYSIS_STORAGE_KEY);
     }
 
     getCv()
@@ -280,19 +267,6 @@ export default function ProfilePage() {
     listCvAnalyses()
       .then(setSavedAnalyses)
       .catch(() => {/* non-critical */});
-  }, []);
-
-  useEffect(() => {
-    const handleDraftUpdated = (event: Event) => {
-      const customEvent = event as CustomEvent<ProfileAnalysisDraft | null>;
-      if (!customEvent.detail) return;
-      setJobDescription(customEvent.detail.jobDescription);
-      setAnalysis(customEvent.detail.analysis);
-      setStreaming(customEvent.detail.streaming);
-      setAnalysisError(customEvent.detail.error);
-    };
-    window.addEventListener(PROFILE_ANALYSIS_UPDATED_EVENT, handleDraftUpdated);
-    return () => window.removeEventListener(PROFILE_ANALYSIS_UPDATED_EVENT, handleDraftUpdated);
   }, []);
 
   useEffect(() => {

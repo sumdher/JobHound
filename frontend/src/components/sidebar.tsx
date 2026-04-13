@@ -20,7 +20,6 @@ const STATIC_NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "📊" },
   { href: "/applications", label: "Applications", icon: "📋" },
   { href: "/applications/new", label: "New Application", icon: "✚" },
-  { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -397,6 +396,19 @@ export function Sidebar({
               </div>
             )}
           </div>
+
+          <Link
+            href="/settings"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              pathname.startsWith("/settings")
+                ? "bg-primary/20 text-primary"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )}
+          >
+            <span className="text-base">⚙️</span>
+            Settings
+          </Link>
 
           {/* Admin link */}
           {session?.isAdmin && (
