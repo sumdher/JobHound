@@ -83,6 +83,7 @@ export function Sidebar({
     const v = localStorage.getItem("jobhound_sidebar_profile_open");
     return v === null ? true : v === "true";
   });
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
   // Delete confirmation state
   const [confirmSession, setConfirmSession] = useState<DeleteState>({ id: null, timer: null });
@@ -103,6 +104,7 @@ export function Sidebar({
   // Close drawer when navigating
   useEffect(() => {
     onClose();
+    setShowSignOutConfirm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, searchParams]);
 
@@ -430,42 +432,85 @@ export function Sidebar({
         {/* User profile */}
         {session?.user && (
           <div className="border-t border-border p-3">
-            <div className="flex items-center gap-3 rounded-lg px-2 py-2">
-              {session.user.image ? (
-                <Image
-                  src={session.user.image}
-                  alt={session.user.name ?? "User"}
-                  width={32}
-                  height={32}
-                  className="rounded-full shrink-0"
-                />
-              ) : (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-bold text-primary">
-                  {(session.user.name ?? "U")[0]}
+            <div className="space-y-2">
+              <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+                {session.user.image ? (
+                  <Image
+                    src={session.user.image}
+                    alt={session.user.name ?? "User"}
+                    width={32}
+                    height={32}
+                    className="rounded-full shrink-0"
+                  />
+                ) : (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-sm font-bold text-primary">
+                    {(session.user.name ?? "U")[0]}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{session.user.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
+                </div>
+                <button
+                  onClick={() => setShowSignOutConfirm((current) => !current)}
+                  className={cn(
+                    "shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors",
+                    showSignOutConfirm
+                      ? "bg-destructive/10 text-destructive"
+                      : "hover:bg-accent hover:text-foreground"
+                  )}
+                  title={showSignOutConfirm ? "Close sign out confirmation" : "Sign out"}
+                  aria-expanded={showSignOutConfirm}
+                  aria-label={showSignOutConfirm ? "Close sign out confirmation" : "Sign out"}
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {showSignOutConfirm && (
+                <div className="rounded-xl border border-border bg-muted/40 p-3 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                        />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-foreground">Sign out of JobHound?</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        You&apos;ll be returned to the login screen and can sign back in at any time.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => setShowSignOutConfirm(false)}
+                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => signOut({ callbackUrl: "/login" })}
+                      className="flex-1 rounded-md bg-destructive px-3 py-2 text-xs font-medium text-destructive-foreground transition-opacity hover:opacity-90"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
                 </div>
               )}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{session.user.name}</p>
-                <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
-              </div>
-              <button
-                onClick={() => {
-                  if (window.confirm("Sign out of JobHound?")) {
-                    signOut({ callbackUrl: "/login" });
-                  }
-                }}
-                className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                title="Sign out"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                  />
-                </svg>
-              </button>
             </div>
           </div>
         )}
