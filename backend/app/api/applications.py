@@ -16,12 +16,13 @@ from datetime import date
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.limiter import limiter
 from app.middleware.auth import get_current_user
 from app.models.application import Application, ApplicationSkill, StatusHistory
 from app.services.llm.base import LLMConfig
@@ -597,7 +598,9 @@ async def delete_application(
         "the services.parser.parse_application service."
     ),
 )
+@limiter.limit("30/minute")
 async def parse_application_text(
+    request: Request,
     body: ParseRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),  # noqa: ARG001
@@ -606,13 +609,15 @@ async def parse_application_text(
     try:
         from app.services import parser as parser_service  # noqa: PLC0415
 
-        # For Ollama, always use the server-side OLLAMA_URL (host.docker.internal).
-        # The frontend stores localhost:11434 which is unreachable inside Docker.
+        # base_url is intentionally never forwarded from user input — allowing an
+        # arbitrary URL would let a user redirect LLM calls (and the full prompt
+        # including all retrieved application data) to an attacker-controlled host.
+        # Providers fall back to their server-side defaults when base_url is None.
         config = LLMConfig(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url if body.provider != "ollama" else None,
+            base_url=None,
         ) if (body.provider or body.model) else None
 
         result = await parser_service.parse_application(

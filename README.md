@@ -74,7 +74,7 @@ graph TD
 
 ```bash
 # 1. Clone and configure
-git clone https://github.com/sumdher/jobhound
+git clone https://github.com/<your-username>/jobhound
 cd jobhound
 
 # 2. Set up environment files
@@ -89,7 +89,7 @@ docker compose up
 
 # Frontend: http://localhost:3000
 # Backend API: http://localhost:8000
-# API Docs: http://localhost:8000/docs
+# API Docs: http://localhost:8000/docs  (only when DEBUG=true)
 ```
 
 ## Production Deployment with Docker Compose
@@ -212,19 +212,22 @@ If the repository is moved later, rerun [`deploy/backup/install-jobhound-db-back
 
 ### Restore from backup
 
-1. Pick the backup file to restore, for example `/var/backups/jobhound/jobhound-db-host-jobhound-20260411T031500Z.dump.gz`
+1. Pick the backup file to restore from `$JOBHOUND_BACKUP_DIR` (default `/var/backups/jobhound`).
+   Backups are named `jobhound-db-<hostname>-<YYYYMMDDTHHMMSSZ>.dump.gz`.
 2. Optionally verify the checksum:
 
 ```bash
 cd /var/backups/jobhound
-sha256sum -c jobhound-db-host-jobhound-20260411T031500Z.dump.gz.sha256
+sha256sum -c <backup-file>.dump.gz.sha256
 ```
 
 3. Restore into the running DB container:
 
 ```bash
-gzip -dc /var/backups/jobhound/jobhound-db-host-jobhound-20260411T031500Z.dump.gz \
-  | docker exec -i jobhound_db_prod sh -ceu 'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_restore --clean --if-exists --no-owner --no-privileges --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"'
+# Replace <backup-file> with the actual .dump.gz path and <db-container> with
+# the name of your running db container (e.g. `docker compose ps -q db`).
+gzip -dc /var/backups/jobhound/<backup-file>.dump.gz \
+  | docker exec -i <db-container> sh -ceu 'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_restore --clean --if-exists --no-owner --no-privileges --username "$POSTGRES_USER" --dbname "$POSTGRES_DB"'
 ```
 
 Restore notes:
@@ -311,7 +314,9 @@ OLLAMA_MODEL=gemma4:e4b
 
 ## API Documentation
 
-Interactive API docs available at `http://localhost:8000/docs` (Swagger UI) and `http://localhost:8000/redoc` (ReDoc).
+Interactive API docs (Swagger UI and ReDoc) are available **in development only** when `DEBUG=true`.
+Start the backend locally and open `http://localhost:8000/docs` or `http://localhost:8000/redoc`.
+These endpoints are disabled in production.
 
 ## Development
 

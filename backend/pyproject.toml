@@ -34,6 +34,7 @@ dependencies = [
     "openai>=1.54.0",
     "anthropic>=0.39.0",
     # Utilities
+    "slowapi>=0.1.9",
     "python-multipart>=0.0.12",
     "tenacity>=9.0.0",
     "tiktoken>=0.8.0",

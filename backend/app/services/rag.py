@@ -83,10 +83,10 @@ async def stream_chat(
         embedding_provider = get_embedding_provider()
         query_embedding = await embedding_provider.embed(message)
 
-        # Inline the embedding as a numeric literal — safe because it's generated
-        # by our own embedding service (only floats), never user input.
+        # Inline the embedding as a numeric literal — each component is explicitly
+        # cast to float so any non-numeric contamination raises before it reaches SQL.
         # This sidesteps SQLAlchemy text() confusing ::vector with a named param.
-        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        embedding_literal = "[" + ",".join(str(float(x)) for x in query_embedding) + "]"
         vector_sql = text(f"""
             SELECT
                 jde.chunk_text,
