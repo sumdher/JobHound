@@ -7,12 +7,14 @@ GET  /api/auth/status  — return current user status (works for pending users t
 """
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.limiter import limiter
 
 from app.api.admin import create_action_token
 from app.config import settings
@@ -49,7 +51,9 @@ class AuthResponse(BaseModel):
         "are the configured admin email."
     ),
 )
+@limiter.limit("20/minute")
 async def google_auth(
+    request: Request,
     body: GoogleTokenRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -64,7 +68,7 @@ async def google_auth(
         logger.warning("Invalid Google ID token", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid Google token: {e}",
+            detail="Google authentication failed",
         ) from e
 
     email = id_info.get("email")

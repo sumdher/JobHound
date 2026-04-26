@@ -45,7 +45,7 @@ def decode_token(token: str) -> dict:
     except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {e}",
+            detail="Invalid authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
 

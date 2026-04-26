@@ -11,13 +11,14 @@ import json
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.limiter import limiter
 from app.middleware.auth import get_current_user
 from app.models.chat import ChatMessage
 from app.models.chat_session import ChatSession
@@ -273,11 +274,12 @@ async def summarize_session(
 
     config: LLMConfig | None = None
     if body.provider or body.model or body.api_key:
+        # base_url is never forwarded from user input to prevent SSRF / prompt exfiltration.
         config = LLMConfig(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url if body.provider != "ollama" else None,
+            base_url=None,
         )
 
     result = await db.execute(
@@ -369,18 +371,21 @@ async def summarize_session(
 
 
 @router.post("")
+@limiter.limit("60/minute")
 async def chat(
+    request: Request,
     body: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     config: LLMConfig | None = None
     if body.provider or body.model or body.api_key:
+        # base_url is never forwarded from user input to prevent SSRF / prompt exfiltration.
         config = LLMConfig(
             provider=body.provider,
             model=body.model,
             api_key=body.api_key,
-            base_url=body.base_url if body.provider != "ollama" else None,
+            base_url=None,
         )
 
     # Resolve session

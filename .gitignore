@@ -4,6 +4,7 @@
 .secrets_pette
 .commands
 deploy/cloudflared/config.yaml
+.claude
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

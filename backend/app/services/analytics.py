@@ -61,16 +61,19 @@ async def get_overview_stats(user_id: uuid.UUID, db: AsyncSession) -> dict:
     }
 
 
+_PERIOD_SQL: dict[str, tuple[str, str]] = {
+    "weekly": ("week", "YYYY-WW"),
+    "monthly": ("month", "YYYY-MM"),
+}
+
+
 async def get_applications_over_time(
     user_id: uuid.UUID, db: AsyncSession, period: str = "monthly"
 ) -> list[dict]:
     """Return application count grouped by week or month."""
-    if period == "weekly":
-        trunc = "week"
-        fmt = "YYYY-WW"
-    else:
-        trunc = "month"
-        fmt = "YYYY-MM"
+    # trunc/fmt are taken from a hard-coded whitelist, never from user input,
+    # so the f-string interpolation below cannot be injected.
+    trunc, fmt = _PERIOD_SQL.get(period, _PERIOD_SQL["monthly"])
 
     sql = text(f"""
         SELECT
