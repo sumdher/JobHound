@@ -5,7 +5,8 @@
 .commands
 deploy/cloudflared/config.yaml
 .claude
-
+.envv
+.infisical.json
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

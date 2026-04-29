@@ -184,7 +184,8 @@ async def stream_chat(
         for hist_msg in history:
             messages.append(Message(role=hist_msg.role, content=hist_msg.content))
 
-    messages.append(Message(role="user", content=message))
+    # Wrap in <user_data> so the model treats it as untrusted input, not instructions.
+    messages.append(Message(role="user", content=f"<user_data>{message}</user_data>"))
 
     # 7. Save user message BEFORE streaming so it always gets an earlier
     #    created_at than the assistant message (same-tx timestamps cause

@@ -19,9 +19,11 @@ class Settings(BaseSettings):
     )
 
     # ── Database ──────────────────────────────────────────────────────────────
+    # Injected by docker-compose via ${POSTGRES_USER}:${POSTGRES_PASSWORD} substitution.
+    # Never hardcode credentials here — set them in Infisical.
     database_url: str = Field(
         default="postgresql+asyncpg://jobhound:localdev@db:5432/jobhound",
-        description="Async PostgreSQL connection string",
+        description="Async PostgreSQL connection string (always injected by compose)",
     )
 
     # ── Auth ──────────────────────────────────────────────────────────────────

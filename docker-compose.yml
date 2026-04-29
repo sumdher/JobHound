@@ -1,21 +1,21 @@
 # JobHound - docker-compose.yml
 # Docker Compose configuration for local development.
-# Starts PostgreSQL (with pgvector), FastAPI backend, and Next.js frontend.
+# Run via: make dev  (wraps with `infisical run` to inject secrets)
 
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: jobhound_db
     environment:
-      POSTGRES_USER: jobhound
-      POSTGRES_PASSWORD: localdev
-      POSTGRES_DB: jobhound
+      POSTGRES_USER: ${POSTGRES_USER:-jobhound}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+      POSTGRES_DB: ${POSTGRES_DB:-jobhound}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jobhound -d jobhound"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jobhound} -d ${POSTGRES_DB:-jobhound}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,9 +28,18 @@ services:
       target: development
     container_name: jobhound_backend
     env_file:
-      - ./backend/.env
+      - ./backend/.env          # non-secret config only
     environment:
-      DATABASE_URL: postgresql+asyncpg://jobhound:localdev@db:5432/jobhound
+      # DATABASE_URL built from root-level Infisical secrets — never hardcoded
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-jobhound}:${POSTGRES_PASSWORD:-localdev}@db:5432/${POSTGRES_DB:-jobhound}
+      # Secrets — injected by `infisical run` via Makefile
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      NEBIUS_API_KEY: ${NEBIUS_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
@@ -56,16 +65,16 @@ services:
       dockerfile: Dockerfile
       target: development
     container_name: jobhound_frontend
-    env_file:
-      - ./frontend/.env
     environment:
       # NEXT_PUBLIC_API_URL intentionally omitted — falls back to "/backend"
       # which is proxied by Next.js rewrites to http://backend:8000.
-      # This makes the app reachable on any IP/network without changes.
       INTERNAL_API_URL: http://backend:8000
-      # NEXTAUTH_URL is intentionally not set.
-      # NextAuth v4 auto-detects the base URL from the request Host header,
-      # so the app works on localhost, LAN IP, or any host without config changes.
+      # NEXTAUTH_URL is intentionally not set for dev.
+      # NextAuth v4 auto-detects the base URL from the request Host header.
+      # Secrets — injected by `infisical run` via Makefile
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "3000:3000"
     volumes:
@@ -77,10 +86,7 @@ services:
     restart: unless-stopped
 
   # Optional: Cloudflare Tunnel for stable public HTTPS access.
-  # Gives a fixed URL (e.g. https://jobhound.example.com) that works from
-  # any network — no dynamic IP, no port forwarding, no server needed.
-  # Setup: cloudflare.com → Zero Trust → Tunnels → create tunnel → get token.
-  # Enable: add CLOUDFLARE_TUNNEL_TOKEN=<token> to your root .env file.
+  # Enable: add CLOUDFLARE_TUNNEL_TOKEN to Infisical and run: make dev
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run
