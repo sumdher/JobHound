@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.limiter import limiter
+from app.middleware.bot_detect import block_bots
 
 from app.api.admin import create_action_token
 from app.config import settings
@@ -56,6 +57,7 @@ async def google_auth(
     request: Request,
     body: GoogleTokenRequest,
     db: AsyncSession = Depends(get_db),
+    _bot_check: None = Depends(block_bots),
 ) -> AuthResponse:
     """Verify Google ID token and return a JobHound JWT."""
     try:

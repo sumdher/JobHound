@@ -31,6 +31,7 @@ from app.models.cv_analysis import CvAnalysis
 from app.models.user import User
 from app.services.llm.base import LLMConfig, Message
 from app.services.llm.factory import get_llm_provider
+from app.services.url_validation import validate_llm_base_url
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -219,6 +220,9 @@ async def analyze_job_fit(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No CV saved. Upload or paste your CV first.",
         )
+
+    # Validate before use — prevents SSRF via user-supplied LLM base URL.
+    await validate_llm_base_url(body.base_url if body.provider != "ollama" else None)
 
     config: LLMConfig | None = None
     if body.provider or body.model or body.api_key:

@@ -51,10 +51,24 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir .
 
+# Audit for known CVEs at build time. Prints findings but does not fail the
+# build — a vulnerability in a transitive dep shouldn't block a critical deploy.
+RUN pip install --no-cache-dir pip-audit && \
+    pip-audit --skip-editable --desc on || true && \
+    pip uninstall -y pip-audit
+
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
+# Drop to a non-root user — an exploited backend process lands as UID 1001,
+# not root, and cannot write outside /app.
+RUN addgroup --system --gid 1001 jobhound && \
+    adduser --system --uid 1001 --ingroup jobhound --no-create-home jobhound && \
+    chown -R jobhound:jobhound /app
+
+USER jobhound
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--access-log", "--timeout-keep-alive", "30"]

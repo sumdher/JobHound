@@ -15,6 +15,7 @@ from app.config import settings as app_settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
+from app.services.url_validation import validate_llm_base_url
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -47,6 +48,9 @@ async def update_settings(
     db: AsyncSession = Depends(get_db),
 ) -> LLMSettings:
     """Persist the user's LLM settings. API keys are never stored server-side."""
+    # Validate before storing — prevents SSRF via user-supplied LLM base URL.
+    if body.provider != "ollama":
+        await validate_llm_base_url(body.base_url)
     current_user.llm_settings = body.model_dump(exclude_none=True)
     await db.commit()
     logger.info("LLM settings updated", user=current_user.email, provider=body.provider)

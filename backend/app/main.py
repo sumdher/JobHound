@@ -23,6 +23,16 @@ from app.services.email import log_email_runtime_config
 
 logger = structlog.get_logger(__name__)
 
+_DEFAULT_JWT_SECRET = "change-me-in-production"
+
+
+def _check_startup_secrets() -> None:
+    if settings.jwt_secret == _DEFAULT_JWT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET is set to the insecure default value. "
+            "Set a strong secret via Infisical (make dev / make prod) before starting."
+        )
+
 
 async def _ensure_runtime_schema_compatibility() -> None:
     """Patch forward-compatible columns that hot-reloaded code may expect."""
@@ -35,6 +45,8 @@ async def _ensure_runtime_schema_compatibility() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown logic."""
+    if not settings.debug:
+        _check_startup_secrets()
     await _ensure_runtime_schema_compatibility()
     logger.info("JobHound backend starting up", llm_provider=settings.llm_provider)
     log_email_runtime_config()
